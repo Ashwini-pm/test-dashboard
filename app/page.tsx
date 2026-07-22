@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { ensureFresh } from "@/lib/db";
-import { parseCtx, stageCounts, leaks, movers, roundOptions, defaultRound, ctxRounds, sankeyTree, SLA } from "@/lib/v2";
+import { parseCtx, stageCounts, roundOptions, defaultRound, ctxRounds, sankeyTree } from "@/lib/v2";
 import Sankey from "@/components/Sankey";
 import { funnel, type Round } from "@/lib/queries";
 import FunnelView from "@/components/FunnelView";
@@ -17,8 +17,6 @@ export default async function Overview({ searchParams }: { searchParams: Promise
   const round = sp.round || defaultRound(ctx);
   const qs = `${ctx === "CSAT" ? "&ctx=CSAT" : ""}${round ? `&round=${round}` : ""}`;
   const s = stageCounts(ctx, round);
-  const L = leaks(ctx, round);
-  const m = movers(ctx, round);
   const f = funnel(ctxRounds(ctx, round)[0] as Round);
   const tree = sankeyTree(ctx, round);
   const maxCount = Math.max(1, ...f.rows.filter((r) => r.count !== null).map((r) => r.count as number));
@@ -68,35 +66,7 @@ export default async function Overview({ searchParams }: { searchParams: Promise
         </div>
       </section>
 
-      {/* Leak board */}
-      <section className="grid mb">
-        <div className="card">
-          <header><h3>Where we are losing them</h3><span className="cap">SLA clocks: pass→slot {SLA.passToSlot}d · held→offer {SLA.heldToOffer}d · offer→seat {SLA.offerToSeat}d</span></header>
-          <div className="leak-grid">
-            {L.map((l) => (
-              <Link key={l.key} href={`/students?filter=${l.key}${qs}`} className={`leak ${l.count > 0 ? l.tone : "ok"}`}>
-                <div className="leak-n tnum">{l.count}</div>
-                <div className="leak-t">{l.title}</div>
-                <div className="leak-d">{l.desc}</div>
-              </Link>
-            ))}
-          </div>
-        </div>
-      </section>
 
-      {/* Last 24h */}
-      <section className="grid mb">
-        <div className="card">
-          <header><h3>Last 24 hours</h3><span className="cap">what moved since yesterday</span></header>
-          <div className="movers">
-            <span className="mv"><b className="tnum">+{m.held}</b> counselling done</span>
-            <span className="mv"><b className="tnum">+{m.offers}</b> offers launched</span>
-            <span className="mv"><b className="tnum">+{m.seats}</b> seats booked</span>
-            <span className="mv"><b className="tnum">{nf(m.calls)}</b> human calls</span>
-            <span className="mv"><b className="tnum">+{m.registrations}</b> registrations</span>
-          </div>
-        </div>
-      </section>
     </>
   );
 }
