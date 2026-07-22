@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { ensureFresh } from "@/lib/db";
-import { parseCtx, oneMinute, stageCounts, leaks, movers, intentSummary, roundOptions, defaultRound, SLA } from "@/lib/v2";
+import { parseCtx, stageCounts, leaks, movers, roundOptions, defaultRound, SLA } from "@/lib/v2";
 import RoundSelect from "@/components/RoundSelect";
 
 export const dynamic = "force-dynamic";
@@ -13,15 +13,16 @@ export default async function Overview({ searchParams }: { searchParams: Promise
   const ctx = parseCtx(sp.ctx);
   const round = sp.round || defaultRound(ctx);
   const qs = `${ctx === "CSAT" ? "&ctx=CSAT" : ""}${round ? `&round=${round}` : ""}`;
-  const lines = oneMinute(ctx, round);
   const s = stageCounts(ctx, round);
   const L = leaks(ctx, round);
   const m = movers(ctx, round);
-  const I = intentSummary(ctx, round);
-
-  const kpis: [string, number, string][] = ctx === "NSAT"
-    ? [["Passed", s.pass, "result"], ["Counselled", s.held, "counselling"], ["Offers", s.offers, "offer_letter"], ["Seats", s.seats, "seat_payment"]]
-    : [["Leads", s.leads, "lead"], ["Paid", s.paid, "registration"], ["Counselled", s.held, "counselling"], ["Seats", s.seats, "seat_payment"]];
+  // The four numbers the CBO actually tracks.
+  const kpis: [string, number][] = [
+    ["Leads", s.leads],
+    ["Test given", s.appeared],
+    ["Counselled", s.held],
+    ["Seat booked", s.seats],
+  ];
 
   return (
     <>
@@ -34,15 +35,6 @@ export default async function Overview({ searchParams }: { searchParams: Promise
         <RoundSelect options={roundOptions(ctx)} current={round} />
       </div>
 
-      {/* The one minute */}
-      <section className="grid mb">
-        <div className="card">
-          <header><h3>In one minute</h3><span className="cap">computed live from every feed</span></header>
-          <ul className="minute">
-            {lines.map((l, i) => (<li key={i}>{l}</li>))}
-          </ul>
-        </div>
-      </section>
 
       {/* Stage KPIs + intent pulse */}
       <section className="grid stage-kpis">
@@ -52,14 +44,6 @@ export default async function Overview({ searchParams }: { searchParams: Promise
             <div className="skpi-val tnum">{nf(val)}</div>
           </div>
         ))}
-        <div className="skpi band-none">
-          <div className="skpi-top"><span className="skpi-label">Intent pulse</span></div>
-          <div className="intent-pulse">
-            <Link href={`/students?filter=hot${qs}`} className="ip hot tnum">{I.hot} hot</Link>
-            <span className="ip warm tnum">{I.warm} warm</span>
-            <span className="ip cool tnum">{I.cooling} cooling</span>
-          </div>
-        </div>
       </section>
 
       {/* Leak board */}
