@@ -350,6 +350,10 @@ export function sankeyTree(ctx: Ctx, round?: string | null): SNode {
   const held = inRound("counselling_sessions", "x.status='held'");
   const cohort = inRound("counselling_sessions", "x.status IN ('held','no_show','reschedule')");
   const olAll = inRound("offer_letters");
+  // OL age buckets (business rule): live = first 3 days, expiring = day 3-4, expired = 5+ days
+  const olLive = inRound("offer_letters", "x.issued_at > date('now','-3 day')");
+  const olExpiring = inRound("offer_letters", "x.issued_at <= date('now','-3 day') AND x.issued_at > date('now','-5 day')");
+  const olExpired = inRound("offer_letters", "x.issued_at <= date('now','-5 day')");
   const seatAll = inRound("payments", "x.paid_at >= '2026-07-16'");
   const attempted = inRound("call_logs", "x.channel='human_call'");
   const connected = inRound("call_logs", "x.channel='human_call' AND x.answered=1");
@@ -386,12 +390,17 @@ export function sankeyTree(ctx: Ctx, round?: string | null): SNode {
     ({ id, label, n, tone, ...(children && children.length ? { children } : {}) });
 
   const seatNode = node("seat", "Seat booked", sSeat.size, "good");
-  const olNode = node("ol", "Offer letter", sOl.size, "good", [
-    seatNode,
-    node("ol_no_seat", "No seat yet", sOl.size - sSeat.size, "bad", comms(diff(sOl, seatAll), "ol_no_seat")),
-  ]);
+  // Counselled splits by the offer's life: booked, live (day 0-2), expiring
+  // (day 3-4), expired (5+ days), or no offer at all.
+  const olOpen = diff(sOl, seatAll);
+  const bLive = inter(olOpen, olLive);
+  const bExpiring = inter(olOpen, olExpiring);
+  const bExpired = inter(olOpen, olExpired);
   const heldNode = node("held", "Counselled", sHeld.size, "good", [
-    olNode,
+    seatNode,
+    node("ol_live", "Offer live", bLive.size, "good", comms(bLive, "ol_live")),
+    node("ol_expiring", "Offer expiring", bExpiring.size, "warn", comms(bExpiring, "ol_expiring")),
+    node("ol_expired", "Offer expired", bExpired.size, "bad", comms(bExpired, "ol_expired")),
     node("held_no_ol", "No offer yet", sHeld.size - sOl.size, "bad", comms(diff(sHeld, olAll), "held_no_ol")),
   ]);
   const slotNode = node("slot", "Slot booked", sSlot.size, "good", [
