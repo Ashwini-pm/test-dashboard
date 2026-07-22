@@ -1233,3 +1233,10 @@ table.list tbody tr:hover td {
 .rounds.busy { opacity: .6; }
 /* V2: exactly 4 KPI tiles fill the row edge to edge (no orphan gap) */
 .stage-kpis { grid-template-columns: repeat(4, 1fr) !important; }
+.half-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+@media (max-width: 1100px) { .half-grid { grid-template-columns: 1fr; } }
+.sankey-slot {
+  min-height: 320px; display: flex; align-items: center; justify-content: center;
+  color: var(--text-muted); font-size: 13.5px; border: 1.5px dashed var(--border);
+  border-radius: 12px; margin-top: 6px; text-align: center; padding: 20px;
+}
