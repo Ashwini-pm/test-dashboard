@@ -1,5 +1,6 @@
 import { ensureFresh } from "@/lib/db";
-import { parseCtx, coverage, commsByDay, dispositions } from "@/lib/v2";
+import { parseCtx, coverage, commsByDay, dispositions, roundOptions } from "@/lib/v2";
+import RoundSelect from "@/components/RoundSelect";
 
 export const dynamic = "force-dynamic";
 const nf = (n: number) => n.toLocaleString("en-IN");
@@ -9,9 +10,10 @@ export default async function Comms({ searchParams }: { searchParams: Promise<Re
   const sp = await searchParams;
   await ensureFresh();
   const ctx = parseCtx(sp.ctx);
-  const cov = coverage(ctx);
-  const days = commsByDay(ctx);
-  const disp = dispositions(ctx);
+  const round = sp.round || null;
+  const cov = coverage(ctx, round);
+  const days = commsByDay(ctx, round);
+  const disp = dispositions(ctx, round);
 
   return (
     <>
@@ -20,6 +22,8 @@ export default async function Comms({ searchParams }: { searchParams: Promise<Re
           <h1>Communication</h1>
           <div className="sub">{ctx} · who we reached, on which channel, and who has heard nothing</div>
         </div>
+        <div className="spacer" />
+        <RoundSelect options={roundOptions(ctx)} />
       </div>
 
       <section className="grid mb">

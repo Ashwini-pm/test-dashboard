@@ -10,11 +10,22 @@ export type Ctx = "NSAT" | "CSAT";
 export function parseCtx(v: string | undefined | null): Ctx {
   return v === "CSAT" ? "CSAT" : "NSAT";
 }
-export function ctxRounds(ctx: Ctx): string[] {
-  return ctx === "CSAT" ? ["CSAT-BBA", "CSAT-BCA", "CSAT-COMB"] : ["NSAT-3", "NSAT-4"];
+// Optional round narrows the context: NSAT -> NSAT-2/3/4, CSAT -> BBA/BCA/COMB.
+export function ctxRounds(ctx: Ctx, round?: string | null): string[] {
+  if (ctx === "CSAT") {
+    if (round === "BBA") return ["CSAT-BBA"];
+    if (round === "BCA") return ["CSAT-BCA"];
+    if (round === "Combined") return ["CSAT-COMB"];
+    return ["CSAT-BBA", "CSAT-BCA", "CSAT-COMB"];
+  }
+  if (round === "NSAT-2" || round === "NSAT-3" || round === "NSAT-4") return [round];
+  return ["NSAT-2", "NSAT-3", "NSAT-4"];
 }
-export function inClause(ctx: Ctx): string {
-  return ctxRounds(ctx).map((r) => `'${r}'`).join(",");
+export function roundOptions(ctx: Ctx): string[] {
+  return ctx === "CSAT" ? ["All", "BBA", "BCA", "Combined"] : ["All", "NSAT-2", "NSAT-3", "NSAT-4"];
+}
+export function inClause(ctx: Ctx, round?: string | null): string {
+  return ctxRounds(ctx, round).map((r) => `'${r}'`).join(",");
 }
 
 // SLA rules (days a student may sit between stages before we call it a leak).
@@ -36,8 +47,8 @@ export interface StageCounts {
   leads: number; paid: number; appeared: number; pass: number; fail: number;
   slotBooked: number; held: number; offers: number; seats: number;
 }
-export function stageCounts(ctx: Ctx): StageCounts {
-  const inc = inClause(ctx);
+export function stageCounts(ctx: Ctx, round?: string | null): StageCounts {
+  const inc = inClause(ctx, round);
   const jl = (t: string, extra = "") =>
     `SELECT COUNT(DISTINCT x.lead_id) n FROM ${t} x JOIN leads l ON l.lead_id=x.lead_id WHERE l.nsat_round IN (${inc})${extra}`;
   const COH = ` AND x.lead_id IN (SELECT lead_id FROM counselling_sessions WHERE status IN ('held','no_show','reschedule'))`;
@@ -90,8 +101,8 @@ export function leakWhere(key: string, inc: string): string | null {
   return W[key] ?? null;
 }
 
-export function leaks(ctx: Ctx): Leak[] {
-  const inc = inClause(ctx);
+export function leaks(ctx: Ctx, round?: string | null): Leak[] {
+  const inc = inClause(ctx, round);
   const c = (k: string) => q(`SELECT COUNT(*) n FROM leads l WHERE ${leakWhere(k, inc)}`);
   const defs: [string, string, string, Leak["tone"]][] = [
     ["pass_no_slot", "Passed, no counselling slot", "cleared the test but nobody booked them", "bad"],
@@ -108,8 +119,8 @@ export function leaks(ctx: Ctx): Leak[] {
 // Movers — last 24h deltas (founder's "what happened since yesterday")
 // ---------------------------------------------------------------------------
 export interface Movers { registrations: number; held: number; offers: number; seats: number; calls: number; }
-export function movers(ctx: Ctx): Movers {
-  const inc = inClause(ctx);
+export function movers(ctx: Ctx, round?: string | null): Movers {
+  const inc = inClause(ctx, round);
   return {
     registrations: q(`SELECT COUNT(*) n FROM registrations r JOIN leads l ON l.lead_id=r.lead_id
       WHERE l.nsat_round IN (${inc}) AND r.registered_at >= datetime('now','-1 day')`),
@@ -127,10 +138,10 @@ export function movers(ctx: Ctx): Movers {
 // ---------------------------------------------------------------------------
 // The One Minute — computed narrative for the landing page
 // ---------------------------------------------------------------------------
-export function oneMinute(ctx: Ctx): string[] {
-  const s = stageCounts(ctx);
-  const m = movers(ctx);
-  const L = leaks(ctx);
+export function oneMinute(ctx: Ctx, round?: string | null): string[] {
+  const s = stageCounts(ctx, round);
+  const m = movers(ctx, round);
+  const L = leaks(ctx, round);
   const pct = (a: number, b: number) => (b > 0 ? Math.round((a / b) * 100) : 0);
   const lines: string[] = [];
   if (ctx === "NSAT") {
@@ -167,8 +178,8 @@ const STAGE_LABEL: Record<string, string> = {
   slot_form: "Slot booked", counselling: "Counselled", offer_letter: "Offer letter", seat_payment: "Seat booked",
 };
 
-export function students(ctx: Ctx, filter?: string | null): { rows: StudentRow[]; total: number } {
-  const inc = inClause(ctx);
+export function students(ctx: Ctx, filter?: string | null, round?: string | null): { rows: StudentRow[]; total: number } {
+  const inc = inClause(ctx, round);
   let where = `l.nsat_round IN (${inc})`;
   if (filter) {
     const lw = leakWhere(filter, inc);
@@ -240,8 +251,8 @@ export function students(ctx: Ctx, filter?: string | null): { rows: StudentRow[]
   return { rows: final, total: final.length };
 }
 
-export function intentSummary(ctx: Ctx): Record<IntentBucket, number> {
-  const { rows } = students(ctx);
+export function intentSummary(ctx: Ctx, round?: string | null): Record<IntentBucket, number> {
+  const { rows } = students(ctx, null, round);
   const out: Record<IntentBucket, number> = { hot: 0, warm: 0, cooling: 0, cold: 0, converted: 0, closed: 0 };
   for (const r of rows) out[r.intent]++;
   return out;
@@ -251,8 +262,8 @@ export function intentSummary(ctx: Ctx): Record<IntentBucket, number> {
 // Communication — coverage per stage x channel + day-wise volumes
 // ---------------------------------------------------------------------------
 export interface CoverageRow { stage: string; total: number; ai: number; human: number; humanConn: number; wa: number; waRead: number; touched72: number; }
-export function coverage(ctx: Ctx): CoverageRow[] {
-  const inc = inClause(ctx);
+export function coverage(ctx: Ctx, round?: string | null): CoverageRow[] {
+  const inc = inClause(ctx, round);
   const stages: [string, string][] = [
     ["registration", "Registered"], ["test", "Appeared"], ["result", "Passed"],
     ["slot_form", "Slot booked"], ["counselling", "Counselled"], ["offer_letter", "Offer letter"], ["seat_payment", "Seat booked"],
@@ -274,8 +285,8 @@ export function coverage(ctx: Ctx): CoverageRow[] {
 }
 
 export interface DayVol { day: string; human: number; humanConn: number; wa: number; waRead: number; }
-export function commsByDay(ctx: Ctx): DayVol[] {
-  const inc = inClause(ctx);
+export function commsByDay(ctx: Ctx, round?: string | null): DayVol[] {
+  const inc = inClause(ctx, round);
   const rows = db
     .prepare(
       `SELECT substr(c.attempted_at,1,10) day,
@@ -293,8 +304,8 @@ export function commsByDay(ctx: Ctx): DayVol[] {
 
 // Disposition mining: AI sentiment + before-test outcome buckets.
 // TODO: swap in CRM call-notes dispositions when the Redash query lands.
-export function dispositions(ctx: Ctx): { label: string; n: number }[] {
-  const inc = inClause(ctx);
+export function dispositions(ctx: Ctx, round?: string | null): { label: string; n: number }[] {
+  const inc = inClause(ctx, round);
   const rows = db
     .prepare(
       `SELECT COALESCE(NULLIF(TRIM(c.sentiment),''),'(none)') label, COUNT(*) n

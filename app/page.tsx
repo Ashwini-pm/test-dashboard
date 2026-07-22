@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { ensureFresh } from "@/lib/db";
-import { parseCtx, oneMinute, stageCounts, leaks, movers, intentSummary, SLA } from "@/lib/v2";
+import { parseCtx, oneMinute, stageCounts, leaks, movers, intentSummary, roundOptions, SLA } from "@/lib/v2";
+import RoundSelect from "@/components/RoundSelect";
 
 export const dynamic = "force-dynamic";
 
@@ -10,12 +11,13 @@ export default async function Overview({ searchParams }: { searchParams: Promise
   const sp = await searchParams;
   await ensureFresh();
   const ctx = parseCtx(sp.ctx);
-  const qs = ctx === "CSAT" ? "&ctx=CSAT" : "";
-  const lines = oneMinute(ctx);
-  const s = stageCounts(ctx);
-  const L = leaks(ctx);
-  const m = movers(ctx);
-  const I = intentSummary(ctx);
+  const round = sp.round || null;
+  const qs = `${ctx === "CSAT" ? "&ctx=CSAT" : ""}${round ? `&round=${round}` : ""}`;
+  const lines = oneMinute(ctx, round);
+  const s = stageCounts(ctx, round);
+  const L = leaks(ctx, round);
+  const m = movers(ctx, round);
+  const I = intentSummary(ctx, round);
 
   const kpis: [string, number, string][] = ctx === "NSAT"
     ? [["Passed", s.pass, "result"], ["Counselled", s.held, "counselling"], ["Offers", s.offers, "offer_letter"], ["Seats", s.seats, "seat_payment"]]
@@ -29,6 +31,7 @@ export default async function Overview({ searchParams }: { searchParams: Promise
           <div className="sub">the one-minute read: where we stand, what moved, where we are losing students</div>
         </div>
         <div className="spacer" />
+        <RoundSelect options={roundOptions(ctx)} />
         <span className="pill"><span className="dot" /> {nf(s.leads)} leads in play</span>
       </div>
 

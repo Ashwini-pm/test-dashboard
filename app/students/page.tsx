@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { ensureFresh } from "@/lib/db";
-import { parseCtx, students, leaks, intentSummary } from "@/lib/v2";
+import { parseCtx, students, leaks, intentSummary, roundOptions } from "@/lib/v2";
+import RoundSelect from "@/components/RoundSelect";
 
 export const dynamic = "force-dynamic";
 
@@ -11,11 +12,12 @@ export default async function Students({ searchParams }: { searchParams: Promise
   const sp = await searchParams;
   await ensureFresh();
   const ctx = parseCtx(sp.ctx);
-  const qs = ctx === "CSAT" ? "&ctx=CSAT" : "";
+  const round = sp.round || null;
+  const qs = `${ctx === "CSAT" ? "&ctx=CSAT" : ""}${round ? `&round=${round}` : ""}`;
   const filter = sp.filter || null;
-  const { rows } = students(ctx, filter);
-  const L = leaks(ctx);
-  const I = intentSummary(ctx);
+  const { rows } = students(ctx, filter, round);
+  const L = leaks(ctx, round);
+  const I = intentSummary(ctx, round);
 
   const chips: { key: string | null; label: string; n: number }[] = [
     { key: null, label: "All", n: -1 },
@@ -32,6 +34,7 @@ export default async function Students({ searchParams }: { searchParams: Promise
           <div className="sub">{ctx} · one list, every student, ranked by intent · click a name for the full journey</div>
         </div>
         <div className="spacer" />
+        <RoundSelect options={roundOptions(ctx)} />
         <span className="pill"><span className="dot" /> {nf(rows.length)} students</span>
       </div>
       <div className="chips">

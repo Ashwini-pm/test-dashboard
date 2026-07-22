@@ -1218,3 +1218,9 @@ table.list tbody tr:hover td {
 .i-conv { background: #e8f5ee; color: #1f8a5b; }
 .i-closed { background: #f1f2f4; color: #98a1ab; text-decoration: line-through; }
 .v2tab td { white-space: nowrap; }
+.round-select select {
+  padding: 9px 12px; border-radius: 12px; border: 1px solid var(--border);
+  background: var(--surface); font-family: var(--font); font-weight: 600;
+  font-size: 13px; color: var(--text); cursor: pointer; box-shadow: var(--shadow-card);
+}
+.round-select.busy select { opacity: .6; }
