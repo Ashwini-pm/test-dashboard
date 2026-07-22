@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { ensureFresh } from "@/lib/db";
-import { parseCtx, stageCounts, leaks, movers, roundOptions, defaultRound, ctxRounds, SLA } from "@/lib/v2";
+import { parseCtx, stageCounts, leaks, movers, roundOptions, defaultRound, ctxRounds, sankeyTree, SLA } from "@/lib/v2";
+import Sankey from "@/components/Sankey";
 import { funnel, type Round } from "@/lib/queries";
 import FunnelView from "@/components/FunnelView";
 import RoundSelect from "@/components/RoundSelect";
@@ -19,6 +20,7 @@ export default async function Overview({ searchParams }: { searchParams: Promise
   const L = leaks(ctx, round);
   const m = movers(ctx, round);
   const f = funnel(ctxRounds(ctx, round)[0] as Round);
+  const tree = sankeyTree(ctx, round);
   const maxCount = Math.max(1, ...f.rows.filter((r) => r.count !== null).map((r) => r.count as number));
   // The four numbers the CBO tracks — same funnel everywhere, that's the point.
   const kpis: [string, number][] = [
@@ -57,8 +59,8 @@ export default async function Overview({ searchParams }: { searchParams: Promise
           <FunnelView rows={f.rows} maxCount={maxCount} />
         </div>
         <div className="card">
-          <header><h3>Flow</h3><span className="cap">sankey · definition coming</span></header>
-          <div className="sankey-slot">Sankey diagram lives here — tell me what it should represent.</div>
+          <header><h3>Flow</h3><span className="cap">click any box: progressed vs dropped, and whether the dropped were even called</span></header>
+          <Sankey root={tree} />
         </div>
       </section>
 

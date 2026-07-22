@@ -322,3 +322,96 @@ export function dispositions(ctx: Ctx, round?: string | null): { label: string; 
     .all() as any[];
   return rows;
 }
+
+// ---------------------------------------------------------------------------
+// Sankey tree — click-to-expand funnel flow. Every "did not progress" node
+// splits into Communicated (human call attempted) vs Not communicated, and
+// Communicated splits into Connected vs Not connected.
+// ---------------------------------------------------------------------------
+export interface SNode {
+  id: string; label: string; n: number;
+  tone: "good" | "bad" | "warn" | "info" | "neutral";
+  children?: SNode[];
+}
+
+export function sankeyTree(ctx: Ctx, round?: string | null): SNode {
+  const inc = inClause(ctx, round);
+  const ids = (sql: string): Set<string> =>
+    new Set((db.prepare(sql).all() as any[]).map((r) => r.lead_id as string));
+  const inRound = (t: string, cond = "1=1") =>
+    ids(`SELECT DISTINCT x.lead_id lead_id FROM ${t} x JOIN leads l ON l.lead_id=x.lead_id WHERE l.nsat_round IN (${inc}) AND ${cond}`);
+
+  const all = ids(`SELECT lead_id FROM leads WHERE nsat_round IN (${inc})`);
+  const reg = inRound("registrations");
+  const appeared = inRound("test_results", "x.appeared=1");
+  const pass = inRound("test_results", "x.result='pass'");
+  const fail = inRound("test_results", "x.result='fail'");
+  const slot = inRound("counselling_sessions", "x.scheduled_at IS NOT NULL");
+  const held = inRound("counselling_sessions", "x.status='held'");
+  const cohort = inRound("counselling_sessions", "x.status IN ('held','no_show','reschedule')");
+  const olAll = inRound("offer_letters");
+  const seatAll = inRound("payments", "x.paid_at >= '2026-07-16'");
+  const attempted = inRound("call_logs", "x.channel='human_call'");
+  const connected = inRound("call_logs", "x.channel='human_call' AND x.answered=1");
+
+  const inter = (a: Set<string>, b: Set<string>) => new Set([...a].filter((x) => b.has(x)));
+  const diff = (a: Set<string>, b: Set<string>) => new Set([...a].filter((x) => !b.has(x)));
+
+  const comms = (set: Set<string>, id: string): SNode[] => {
+    const comm = inter(set, attempted);
+    const conn = inter(comm, connected);
+    return [
+      {
+        id: `${id}:comm`, label: "Communicated (human)", n: comm.size, tone: "info",
+        children: [
+          { id: `${id}:conn`, label: "Connected", n: conn.size, tone: "good" },
+          { id: `${id}:nopick`, label: "Not connected", n: comm.size - conn.size, tone: "warn" },
+        ],
+      },
+      { id: `${id}:nocomm`, label: "Not communicated", n: set.size - comm.size, tone: "bad" },
+    ];
+  };
+
+  // progressive intersections down the funnel
+  const sReg = inter(all, reg);
+  const sApp = inter(sReg, appeared);
+  const sPass = inter(sApp, pass);
+  const sFail = inter(sApp, fail);
+  const sSlot = inter(sPass, slot);
+  const sHeld = inter(sSlot.size ? new Set([...sPass]) : sPass, held); // held may include slot-less form outcomes
+  const sOl = inter(sHeld.size ? inter(sPass, cohort) : cohort, olAll);
+  const sSeat = inter(sOl.size ? sOl : cohort, seatAll);
+
+  const node = (id: string, label: string, n: number, tone: SNode["tone"], children?: SNode[]): SNode =>
+    ({ id, label, n, tone, ...(children && children.length ? { children } : {}) });
+
+  const seatNode = node("seat", "Seat booked", sSeat.size, "good");
+  const olNode = node("ol", "Offer letter", sOl.size, "good", [
+    seatNode,
+    node("ol_no_seat", "No seat yet", sOl.size - sSeat.size, "bad", comms(diff(sOl, seatAll), "ol_no_seat")),
+  ]);
+  const heldNode = node("held", "Counselled", sHeld.size, "good", [
+    olNode,
+    node("held_no_ol", "No offer yet", sHeld.size - sOl.size, "bad", comms(diff(sHeld, olAll), "held_no_ol")),
+  ]);
+  const slotNode = node("slot", "Slot booked", sSlot.size, "good", [
+    heldNode,
+    node("slot_no_held", "Counselling pending", Math.max(0, sSlot.size - sHeld.size), "warn", comms(diff(sSlot, held), "slot_no_held")),
+  ]);
+  const passNode = node("pass", "Passed", sPass.size, "good", [
+    slotNode,
+    node("pass_no_slot", "No slot booked", sPass.size - sSlot.size, "bad", comms(diff(sPass, slot), "pass_no_slot")),
+  ]);
+  const testNode = node("test", "Test given", sApp.size, "good", [
+    passNode,
+    node("fail", "Failed", sFail.size, "warn", comms(sFail, "fail")),
+  ]);
+  const regNode = node("reg", "Registered", sReg.size, "good", [
+    testNode,
+    node("reg_no_test", "Did not give test", sReg.size - sApp.size, "bad", comms(diff(sReg, appeared), "reg_no_test")),
+  ]);
+  return node("lead", "Leads", all.size, "neutral", [
+    regNode,
+    node("no_reg", "Not registered", all.size - sReg.size, "bad", comms(diff(all, reg), "no_reg")),
+  ]);
+}
