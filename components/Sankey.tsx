@@ -61,8 +61,8 @@ export default function Sankey({ root }: { root: SNode }) {
   };
 
   return (
-    <div className="sankey-wrap">
-      <svg viewBox={`0 0 ${width} ${H}`} style={{ width: "100%", height: "auto" }}>
+    <div className="sankey-wrap" style={{ overflowX: "auto" }}>
+      <svg width={width} height={H} viewBox={`0 0 ${width} ${H}`} style={{ maxWidth: "100%", display: "block" }}>
         {/* ribbons */}
         {flat.filter((p) => p.parent).map((p) => {
           const a = p.parent!;
