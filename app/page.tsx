@@ -31,8 +31,7 @@ export default async function Overview({ searchParams }: { searchParams: Promise
           <div className="sub">the one-minute read: where we stand, what moved, where we are losing students</div>
         </div>
         <div className="spacer" />
-        <RoundSelect options={roundOptions(ctx)} />
-        <span className="pill"><span className="dot" /> {nf(s.leads)} leads in play</span>
+        <RoundSelect options={roundOptions(ctx)} current={round} />
       </div>
 
       {/* The one minute */}

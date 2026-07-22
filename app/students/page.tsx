@@ -34,7 +34,7 @@ export default async function Students({ searchParams }: { searchParams: Promise
           <div className="sub">{ctx} · one list, every student, ranked by intent · click a name for the full journey</div>
         </div>
         <div className="spacer" />
-        <RoundSelect options={roundOptions(ctx)} />
+        <RoundSelect options={roundOptions(ctx)} current={round} />
         <span className="pill"><span className="dot" /> {nf(rows.length)} students</span>
       </div>
       <div className="chips">

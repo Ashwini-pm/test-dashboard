@@ -23,7 +23,7 @@ export default async function Comms({ searchParams }: { searchParams: Promise<Re
           <div className="sub">{ctx} · who we reached, on which channel, and who has heard nothing</div>
         </div>
         <div className="spacer" />
-        <RoundSelect options={roundOptions(ctx)} />
+        <RoundSelect options={roundOptions(ctx)} current={round} />
       </div>
 
       <section className="grid mb">

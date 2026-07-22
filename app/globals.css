@@ -1224,3 +1224,10 @@ table.list tbody tr:hover td {
   font-size: 13px; color: var(--text); cursor: pointer; box-shadow: var(--shadow-card);
 }
 .round-select.busy select { opacity: .6; }
+.rounds button {
+  border: 0; background: transparent; color: var(--text-muted);
+  font-family: var(--font); font-weight: 500; font-size: 13px;
+  padding: 8px 14px; border-radius: 10px; cursor: pointer;
+}
+.rounds button.on { background: var(--primary); color: #fff; }
+.rounds.busy { opacity: .6; }
