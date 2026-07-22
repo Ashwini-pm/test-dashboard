@@ -97,6 +97,9 @@ export function leakWhere(key: string, inc: string): string | null {
     no_show_open: `l.nsat_round IN (${inc}) AND l.lead_id IN (SELECT lead_id FROM counselling_sessions WHERE status IN ('no_show','reschedule'))
       AND l.lead_id NOT IN (SELECT lead_id FROM counselling_sessions WHERE status='held')
       AND l.lead_id NOT IN (SELECT lead_id FROM payments)`,
+    csat_unpaid: `l.nsat_round IN (${inc}) AND l.lead_id NOT IN (SELECT lead_id FROM registrations)`,
+    csat_unpaid_24h: `l.nsat_round IN (${inc}) AND l.lead_id NOT IN (SELECT lead_id FROM registrations)
+      AND l.created_at IS NOT NULL AND l.created_at < datetime('now','-1 day')`,
     untouched_48h: `l.nsat_round IN (${inc}) AND l.lead_id IN (SELECT lead_id FROM test_results WHERE result='pass')
       AND l.lead_id NOT IN (SELECT lead_id FROM payments)
       AND l.lead_id NOT IN (SELECT lead_id FROM call_logs WHERE attempted_at >= datetime('now','-2 day'))
@@ -108,6 +111,13 @@ export function leakWhere(key: string, inc: string): string | null {
 export function leaks(ctx: Ctx, round?: string | null): Leak[] {
   const inc = inClause(ctx, round);
   const c = (k: string) => q(`SELECT COUNT(*) n FROM leads l WHERE ${leakWhere(k, inc)}`);
+  if (ctx === "CSAT") {
+    const defs: [string, string, string, Leak["tone"]][] = [
+      ["csat_unpaid", "Lead, payment pending", "filled the form but has not paid yet", "warn"],
+      ["csat_unpaid_24h", "Payment pending 24h+", "a day gone since signup, still unpaid", "bad"],
+    ];
+    return defs.map(([key, title, desc, tone]) => ({ key, title, desc, tone, count: c(key) }));
+  }
   const defs: [string, string, string, Leak["tone"]][] = [
     ["pass_no_slot", "Passed, no counselling slot", "cleared the test but nobody booked them", "bad"],
     ["slot_no_outcome", "Slot passed, no outcome", "slot day is gone and the panelist never responded", "warn"],

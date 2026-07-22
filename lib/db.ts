@@ -309,7 +309,7 @@ function overlayNsat4Csat(pulls: CsatPull): void {
     return d.length >= 10 ? d.slice(-10) : "";
   };
   const insLead = db.prepare(
-    "INSERT OR IGNORE INTO leads(lead_id,student_id,full_name,phone,phone10,email,city,region,nsat_round,source) VALUES (?,?,?,?,?,?,?,?,?,?)"
+    "INSERT OR IGNORE INTO leads(lead_id,student_id,full_name,phone,phone10,email,city,region,nsat_round,source,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)"
   );
   const insReg = db.prepare("INSERT INTO registrations(lead_id,nsat_round,registered_at) VALUES (?,?,?)");
   const tx = db.transaction(() => {
@@ -324,7 +324,8 @@ function overlayNsat4Csat(pulls: CsatPull): void {
         const lid = table === "nsat4" ? `NSAT-4-${r.id}` : `CSAT-${table}-${r.id}`;
         insLead.run(
           lid, String(r.id ?? ""), r.full_name ?? null, r.phone ?? null, p10(String(r.phone ?? "")),
-          r.email ?? null, r.user_city ?? null, r.program ?? null, round, r.lead_source ?? null
+          r.email ?? null, r.user_city ?? null, r.program ?? null, round, r.lead_source ?? null,
+          r.created_at ?? null
         );
         if (String(r.payment_status ?? "").toLowerCase() === "paid") {
           insReg.run(lid, round, r.paid_at ?? r.created_at ?? null);
