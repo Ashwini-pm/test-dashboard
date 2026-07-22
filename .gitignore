@@ -1,0 +1,14 @@
+node_modules
+.next
+next-env.d.ts
+*.tsbuildinfo
+.DS_Store
+.env*
+
+# data & secrets: never in the repo
+db/nsat.db
+data/
+mock-data/
+automation/
+docs/SLOT_STREAM_HANDOFF.md
+dashboard/
