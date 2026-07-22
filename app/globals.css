@@ -1240,3 +1240,11 @@ table.list tbody tr:hover td {
   color: var(--text-muted); font-size: 13.5px; border: 1.5px dashed var(--border);
   border-radius: 12px; margin-top: 6px; text-align: center; padding: 20px;
 }
+/* Sankey: subtle entrance + hover animation */
+@keyframes sk-in { from { opacity: 0; transform: translateX(-8px); } to { opacity: 1; transform: none; } }
+.sk-node { animation: sk-in .28s ease both; }
+.sk-node:hover rect:first-of-type { filter: brightness(0.97); }
+.sk-link { opacity: 0; animation: sk-fade .45s ease .12s forwards; transition: opacity .2s; }
+@keyframes sk-fade { to { opacity: 0.22; } }
+.sk-link:hover { opacity: 0.4; }
+@media (prefers-reduced-motion: reduce) { .sk-node, .sk-link { animation-duration: 0.01s; } }

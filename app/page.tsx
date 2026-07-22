@@ -52,12 +52,16 @@ export default async function Overview({ searchParams }: { searchParams: Promise
         ))}
       </section>
 
-      {/* Funnel + Sankey */}
-      <section className="half-grid mb">
+      {/* Conversion funnel */}
+      <section className="grid mb">
         <div className="card">
           <header><h3>Conversion Funnel</h3><span className="cap">full funnel · {round}</span></header>
           <FunnelView rows={f.rows} maxCount={maxCount} />
         </div>
+      </section>
+
+      {/* Flow sankey */}
+      <section className="grid mb">
         <div className="card">
           <header><h3>Flow</h3><span className="cap">click any box: progressed vs dropped, and whether the dropped were even called</span></header>
           <Sankey root={tree} />

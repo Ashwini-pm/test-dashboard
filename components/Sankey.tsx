@@ -73,8 +73,8 @@ export default function Sankey({ root }: { root: SNode }) {
           const w = Math.max(2, Math.min(p.h, a.h) * (p.node.n / Math.max(1, a.node.n)));
           const mx = (x1 + x2) / 2;
           return (
-            <path key={`l-${p.node.id}`} d={`M ${x1} ${y1} C ${mx} ${y1}, ${mx} ${y2}, ${x2} ${y2}`}
-              stroke={TONE[p.node.tone]} strokeWidth={w} fill="none" opacity={0.22} strokeLinecap="round" />
+            <path key={`l-${p.node.id}`} className="sk-link" d={`M ${x1} ${y1} C ${mx} ${y1}, ${mx} ${y2}, ${x2} ${y2}`}
+              stroke={TONE[p.node.tone]} strokeWidth={w} fill="none" strokeLinecap="round" />
           );
         })}
         {/* nodes */}
@@ -83,7 +83,7 @@ export default function Sankey({ root }: { root: SNode }) {
           const expandable = !!p.node.children;
           const isOpen = open.has(p.node.id);
           return (
-            <g key={p.node.id} onClick={() => toggle(p.node)} style={{ cursor: expandable ? "pointer" : "default" }}>
+            <g key={p.node.id} className="sk-node" onClick={() => toggle(p.node)} style={{ cursor: expandable ? "pointer" : "default" }}>
               <rect x={x} y={p.y} width={NODE_W} height={p.h} rx={10}
                 fill="#fff" stroke={TONE[p.node.tone]} strokeWidth={1.6} />
               <rect x={x} y={p.y} width={5} height={p.h} rx={2.5} fill={TONE[p.node.tone]} />
