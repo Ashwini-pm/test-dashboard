@@ -18,12 +18,11 @@ function Inner({ options }: { options: string[] }) {
   const pathname = usePathname();
   const params = useSearchParams();
   const [pending, startTransition] = useTransition();
-  const cur = params.get("round") || "All";
+  const cur = params.get("round") || options[0];
 
   const go = (v: string) => {
     const q = new URLSearchParams(params.toString());
-    if (v === "All") q.delete("round");
-    else q.set("round", v);
+    q.set("round", v);
     const qs = q.toString();
     startTransition(() => router.push(`${pathname}${qs ? `?${qs}` : ""}`));
   };

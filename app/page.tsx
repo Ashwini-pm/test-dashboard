@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { ensureFresh } from "@/lib/db";
-import { parseCtx, oneMinute, stageCounts, leaks, movers, intentSummary, roundOptions, SLA } from "@/lib/v2";
+import { parseCtx, oneMinute, stageCounts, leaks, movers, intentSummary, roundOptions, defaultRound, SLA } from "@/lib/v2";
 import RoundSelect from "@/components/RoundSelect";
 
 export const dynamic = "force-dynamic";
@@ -11,7 +11,7 @@ export default async function Overview({ searchParams }: { searchParams: Promise
   const sp = await searchParams;
   await ensureFresh();
   const ctx = parseCtx(sp.ctx);
-  const round = sp.round || null;
+  const round = sp.round || defaultRound(ctx);
   const qs = `${ctx === "CSAT" ? "&ctx=CSAT" : ""}${round ? `&round=${round}` : ""}`;
   const lines = oneMinute(ctx, round);
   const s = stageCounts(ctx, round);

@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { ensureFresh } from "@/lib/db";
-import { parseCtx, students, leaks, intentSummary, roundOptions } from "@/lib/v2";
+import { parseCtx, students, leaks, intentSummary, roundOptions, defaultRound } from "@/lib/v2";
 import RoundSelect from "@/components/RoundSelect";
 
 export const dynamic = "force-dynamic";
@@ -12,7 +12,7 @@ export default async function Students({ searchParams }: { searchParams: Promise
   const sp = await searchParams;
   await ensureFresh();
   const ctx = parseCtx(sp.ctx);
-  const round = sp.round || null;
+  const round = sp.round || defaultRound(ctx);
   const qs = `${ctx === "CSAT" ? "&ctx=CSAT" : ""}${round ? `&round=${round}` : ""}`;
   const filter = sp.filter || null;
   const { rows } = students(ctx, filter, round);

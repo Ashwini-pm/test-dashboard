@@ -1,5 +1,5 @@
 import { ensureFresh } from "@/lib/db";
-import { parseCtx, coverage, commsByDay, dispositions, roundOptions } from "@/lib/v2";
+import { parseCtx, coverage, commsByDay, dispositions, roundOptions, defaultRound } from "@/lib/v2";
 import RoundSelect from "@/components/RoundSelect";
 
 export const dynamic = "force-dynamic";
@@ -10,7 +10,7 @@ export default async function Comms({ searchParams }: { searchParams: Promise<Re
   const sp = await searchParams;
   await ensureFresh();
   const ctx = parseCtx(sp.ctx);
-  const round = sp.round || null;
+  const round = sp.round || defaultRound(ctx);
   const cov = coverage(ctx, round);
   const days = commsByDay(ctx, round);
   const disp = dispositions(ctx, round);

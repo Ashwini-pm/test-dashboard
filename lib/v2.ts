@@ -22,7 +22,11 @@ export function ctxRounds(ctx: Ctx, round?: string | null): string[] {
   return ["NSAT-2", "NSAT-3", "NSAT-4"];
 }
 export function roundOptions(ctx: Ctx): string[] {
-  return ctx === "CSAT" ? ["All", "BBA", "BCA", "Combined"] : ["All", "NSAT-2", "NSAT-3", "NSAT-4"];
+  return ctx === "CSAT" ? ["BBA", "BCA", "Combined"] : ["NSAT-2", "NSAT-3", "NSAT-4"];
+}
+// No "All": rounds are separate cohorts. Default = the running round.
+export function defaultRound(ctx: Ctx): string {
+  return ctx === "CSAT" ? "BBA" : "NSAT-3";
 }
 export function inClause(ctx: Ctx, round?: string | null): string {
   return ctxRounds(ctx, round).map((r) => `'${r}'`).join(",");
