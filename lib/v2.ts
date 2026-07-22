@@ -111,13 +111,6 @@ export function leakWhere(key: string, inc: string): string | null {
 export function leaks(ctx: Ctx, round?: string | null): Leak[] {
   const inc = inClause(ctx, round);
   const c = (k: string) => q(`SELECT COUNT(*) n FROM leads l WHERE ${leakWhere(k, inc)}`);
-  if (ctx === "CSAT") {
-    const defs: [string, string, string, Leak["tone"]][] = [
-      ["csat_unpaid", "Lead, payment pending", "filled the form but has not paid yet", "warn"],
-      ["csat_unpaid_24h", "Payment pending 24h+", "a day gone since signup, still unpaid", "bad"],
-    ];
-    return defs.map(([key, title, desc, tone]) => ({ key, title, desc, tone, count: c(key) }));
-  }
   const defs: [string, string, string, Leak["tone"]][] = [
     ["pass_no_slot", "Passed, no counselling slot", "cleared the test but nobody booked them", "bad"],
     ["slot_no_outcome", "Slot passed, no outcome", "slot day is gone and the panelist never responded", "warn"],

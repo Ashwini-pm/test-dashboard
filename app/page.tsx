@@ -16,20 +16,13 @@ export default async function Overview({ searchParams }: { searchParams: Promise
   const s = stageCounts(ctx, round);
   const L = leaks(ctx, round);
   const m = movers(ctx, round);
-  // The four numbers the CBO actually tracks — per product's own funnel.
-  const kpis: [string, number][] = ctx === "CSAT"
-    ? [
-        ["Leads", s.leads],
-        ["Paid", s.paid],
-        ["Payment pending", s.leads - s.paid],
-        ["Paid %", s.leads > 0 ? Math.round((s.paid / s.leads) * 100) : 0],
-      ]
-    : [
-        ["Leads", s.leads],
-        ["Test given", s.appeared],
-        ["Counselled", s.held],
-        ["Seat booked", s.seats],
-      ];
+  // The four numbers the CBO tracks — same funnel everywhere, that's the point.
+  const kpis: [string, number][] = [
+    ["Leads", s.leads],
+    ["Test given", s.appeared],
+    ["Counselled", s.held],
+    ["Seat booked", s.seats],
+  ];
 
   return (
     <>
@@ -48,7 +41,7 @@ export default async function Overview({ searchParams }: { searchParams: Promise
         {kpis.map(([label, val]) => (
           <div key={label} className="skpi band-none">
             <div className="skpi-top"><span className="skpi-label">{label}</span></div>
-            <div className="skpi-val tnum">{label === "Paid %" ? `${val}%` : nf(val)}</div>
+            <div className="skpi-val tnum">{nf(val)}</div>
           </div>
         ))}
       </section>
@@ -56,7 +49,7 @@ export default async function Overview({ searchParams }: { searchParams: Promise
       {/* Leak board */}
       <section className="grid mb">
         <div className="card">
-          <header><h3>Where we are losing them</h3><span className="cap">{ctx === "CSAT" ? "payment funnel leaks" : `SLA clocks: pass→slot ${SLA.passToSlot}d · held→offer ${SLA.heldToOffer}d · offer→seat ${SLA.offerToSeat}d`}</span></header>
+          <header><h3>Where we are losing them</h3><span className="cap">SLA clocks: pass→slot {SLA.passToSlot}d · held→offer {SLA.heldToOffer}d · offer→seat {SLA.offerToSeat}d</span></header>
           <div className="leak-grid">
             {L.map((l) => (
               <Link key={l.key} href={`/students?filter=${l.key}${qs}`} className={`leak ${l.count > 0 ? l.tone : "ok"}`}>
@@ -74,19 +67,11 @@ export default async function Overview({ searchParams }: { searchParams: Promise
         <div className="card">
           <header><h3>Last 24 hours</h3><span className="cap">what moved since yesterday</span></header>
           <div className="movers">
-            {ctx === "CSAT" ? (
-              <>
-                <span className="mv"><b className="tnum">+{m.registrations}</b> paid registrations</span>
-              </>
-            ) : (
-              <>
-                <span className="mv"><b className="tnum">+{m.held}</b> counselling done</span>
-                <span className="mv"><b className="tnum">+{m.offers}</b> offers launched</span>
-                <span className="mv"><b className="tnum">+{m.seats}</b> seats booked</span>
-                <span className="mv"><b className="tnum">{nf(m.calls)}</b> human calls</span>
-                <span className="mv"><b className="tnum">+{m.registrations}</b> registrations</span>
-              </>
-            )}
+            <span className="mv"><b className="tnum">+{m.held}</b> counselling done</span>
+            <span className="mv"><b className="tnum">+{m.offers}</b> offers launched</span>
+            <span className="mv"><b className="tnum">+{m.seats}</b> seats booked</span>
+            <span className="mv"><b className="tnum">{nf(m.calls)}</b> human calls</span>
+            <span className="mv"><b className="tnum">+{m.registrations}</b> registrations</span>
           </div>
         </div>
       </section>

@@ -1231,3 +1231,5 @@ table.list tbody tr:hover td {
 }
 .rounds button.on { background: var(--primary); color: #fff; }
 .rounds.busy { opacity: .6; }
+/* V2: exactly 4 KPI tiles fill the row edge to edge (no orphan gap) */
+.stage-kpis { grid-template-columns: repeat(4, 1fr) !important; }
