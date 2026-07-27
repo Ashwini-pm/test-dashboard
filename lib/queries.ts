@@ -325,6 +325,12 @@ function nsat3MapReady(): boolean {
     return int(db.prepare("SELECT COUNT(*) n FROM nsat3_map").get() as any) > 0;
   } catch { return false; }
 }
+function n4MapReady(): boolean {
+  try {
+    if (!int(db.prepare("SELECT COUNT(*) n FROM sqlite_master WHERE type='table' AND name='nsat4_map'").get() as any)) return false;
+    return int(db.prepare("SELECT COUNT(*) n FROM nsat4_map").get() as any) > 0;
+  } catch { return false; }
+}
 function csatMapReady(): boolean {
   try {
     if (!int(db.prepare("SELECT COUNT(*) n FROM sqlite_master WHERE type='table' AND name='csat_map'").get() as any)) return false;
@@ -349,7 +355,9 @@ export function stageKpis(round: Round, src?: Src): StageKpi[] {
   const passed = c(`SELECT COUNT(*) n FROM test_results x ${jl(" AND x.result='pass'")}`);
   const failed = c(`SELECT COUNT(*) n FROM test_results x ${jl(" AND x.result='fail'")}`);
   const achieved: Record<string, number> = {
-    registration: (round === "NSAT-3" && !src && nsat3MapReady())
+    registration: (round === "NSAT-4" && !src && n4MapReady())
+      ? c(`SELECT COUNT(*) n FROM nsat4_map WHERE registered='paid'`)
+      : (round === "NSAT-3" && !src && nsat3MapReady())
       ? c(`SELECT COUNT(*) n FROM nsat3_map WHERE reg_status='paid'`)
       : (CSAT_ROUND_SET.has(round) && !src && csatMapReady())
       ? c(`SELECT COUNT(*) n FROM csat_map${csatMapWhere(round, true)}`)
@@ -593,12 +601,17 @@ function funnelN3(round: Round = "NSAT-3", src?: Src): { base: number; rows: Fun
   // reconciliation mapping (nsat3_map) when present; all other stages unchanged.
   const useNsat3 = round === "NSAT-3" && !src && nsat3MapReady();
   const useCsat = CSAT_ROUND_SET.has(round) && !src && csatMapReady();
-  const leads = useNsat3
+  const useN4 = round === "NSAT-4" && !src && n4MapReady();
+  const leads = useN4
+    ? c(`SELECT COUNT(*) n FROM nsat4_map`)
+    : useNsat3
     ? c(`SELECT COUNT(*) n FROM nsat3_map`)
     : useCsat
     ? c(`SELECT COUNT(*) n FROM csat_map${csatMapWhere(round, false)}`)
     : c(`SELECT COUNT(*) n FROM leads l WHERE l.nsat_round IN (${inc})${S}`);
-  const reg = useNsat3
+  const reg = useN4
+    ? c(`SELECT COUNT(*) n FROM nsat4_map WHERE registered='paid'`)
+    : useNsat3
     ? c(`SELECT COUNT(*) n FROM nsat3_map WHERE reg_status='paid'`)
     : useCsat
     ? c(`SELECT COUNT(*) n FROM csat_map${csatMapWhere(round, true)}`)

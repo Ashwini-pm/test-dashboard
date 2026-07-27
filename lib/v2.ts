@@ -45,12 +45,25 @@ const int = (row: any): number => Number((row && (row.n ?? row)) || 0);
 const q = (sql: string) => int(db.prepare(sql).get() as any);
 // csat_map = the lead_map reconciliation (deduped bba/bca/combined + crm_only),
 // hydrated by db.ts. round_tag values are CSAT-BBA/BCA/COMB, matching the enum.
-const csatMapReady = (): boolean => {
+const tableHasRows = (t: string): boolean => {
   try {
-    if (!int(db.prepare("SELECT COUNT(*) n FROM sqlite_master WHERE type='table' AND name='csat_map'").get() as any)) return false;
-    return int(db.prepare("SELECT COUNT(*) n FROM csat_map").get() as any) > 0;
+    if (!int(db.prepare(`SELECT COUNT(*) n FROM sqlite_master WHERE type='table' AND name='${t}'`).get() as any)) return false;
+    return int(db.prepare(`SELECT COUNT(*) n FROM ${t}`).get() as any) > 0;
   } catch { return false; }
 };
+// Rounds whose Lead/Registration come from a reconciliation map instead of the
+// base tables. CSAT and NSAT-4 qualify: neither has base downstream stage rows,
+// so swapping the universe cannot break later stages. NSAT-3 keeps the Sheet1
+// universe for its base tables (its stage data is keyed to it).
+function mapUniverse(ctx: Ctx, round?: string | null): { table: string; where: string } | null {
+  if (ctx === "CSAT" && tableHasRows("csat_map")) {
+    return { table: "csat_map", where: ` AND round_tag IN (${inClause(ctx, round)})` };
+  }
+  if (ctx === "NSAT" && round === "NSAT-4" && tableHasRows("nsat4_map")) {
+    return { table: "nsat4_map", where: "" };
+  }
+  return null;
+}
 
 // ---------------------------------------------------------------------------
 // Core stage counts (same definitions the v1 dashboard settled on)
@@ -66,13 +79,13 @@ export function stageCounts(ctx: Ctx, round?: string | null): StageCounts {
   const COH = ` AND x.lead_id IN (SELECT lead_id FROM counselling_sessions WHERE status IN ('held','no_show','reschedule'))`;
   // CSAT Lead + Registration come from the lead_map reconciliation (csat_map),
   // not the raw base tables. Downstream stages stay 0 for CSAT (no such data).
-  const useCsatMap = ctx === "CSAT" && csatMapReady();
+  const mu = mapUniverse(ctx, round);
   return {
-    leads: useCsatMap
-      ? q(`SELECT COUNT(*) n FROM csat_map WHERE round_tag IN (${inc})`)
+    leads: mu
+      ? q(`SELECT COUNT(*) n FROM ${mu.table} WHERE 1=1${mu.where}`)
       : q(`SELECT COUNT(*) n FROM leads WHERE nsat_round IN (${inc})`),
-    paid: useCsatMap
-      ? q(`SELECT COUNT(*) n FROM csat_map WHERE round_tag IN (${inc}) AND registered='paid'`)
+    paid: mu
+      ? q(`SELECT COUNT(*) n FROM ${mu.table} WHERE registered='paid'${mu.where}`)
       : q(`SELECT COUNT(DISTINCT lead_id) n FROM registrations WHERE nsat_round IN (${inc})`),
     appeared: q(jl("test_results", " AND x.appeared=1")),
     pass: q(jl("test_results", " AND x.result='pass'")),
@@ -862,12 +875,13 @@ export function sankeyTree(ctx: Ctx, round?: string | null): SNode {
   // KPIs and funnel use, or the Sankey disagrees with the cards above it.
   // Safe for CSAT: it has no downstream stage rows, so the id-space differs
   // only where every later set is empty anyway.
-  const useCsatMap = ctx === "CSAT" && csatMapHasRows();
-  const all = useCsatMap
-    ? ids(`SELECT lead_id FROM csat_map WHERE round_tag IN (${inc})`)
+  const mu = mapUniverse(ctx, round);
+  const useCsatMap = !!mu;
+  const all = mu
+    ? ids(`SELECT lead_id FROM ${mu.table} WHERE 1=1${mu.where}`)
     : ids(`SELECT lead_id FROM leads WHERE nsat_round IN (${inc})`);
-  const reg = useCsatMap
-    ? ids(`SELECT lead_id FROM csat_map WHERE round_tag IN (${inc}) AND registered='paid'`)
+  const reg = mu
+    ? ids(`SELECT lead_id FROM ${mu.table} WHERE registered='paid'${mu.where}`)
     : inRound("registrations");
   const appeared = inRound("test_results", "x.appeared=1");
   const pass = inRound("test_results", "x.result='pass'");
@@ -883,11 +897,11 @@ export function sankeyTree(ctx: Ctx, round?: string | null): SNode {
   const seatAll = inRound("payments", "x.paid_at >= '2026-07-16'");
   // CSAT calling lives as aggregates on the map (total_calls / connected_calls),
   // not as call_logs rows, so the comms split must read the map for CSAT too.
-  const attempted = useCsatMap
-    ? ids(`SELECT lead_id FROM csat_map WHERE round_tag IN (${inc}) AND coalesce(total_calls,0) > 0`)
+  const attempted = mu
+    ? ids(`SELECT lead_id FROM ${mu.table} WHERE coalesce(total_calls,0) > 0${mu.where}`)
     : inRound("call_logs", "x.channel='human_call'");
-  const connected = useCsatMap
-    ? ids(`SELECT lead_id FROM csat_map WHERE round_tag IN (${inc}) AND coalesce(connected_calls,0) > 0`)
+  const connected = mu
+    ? ids(`SELECT lead_id FROM ${mu.table} WHERE coalesce(connected_calls,0) > 0${mu.where}`)
     : inRound("call_logs", "x.channel='human_call' AND x.answered=1");
 
   const inter = (a: Set<string>, b: Set<string>) => new Set([...a].filter((x) => b.has(x)));
