@@ -113,7 +113,9 @@ export default async function Overview({ searchParams }: { searchParams: Promise
           <div className="card">
             <header>
               <h3>Post test</h3>
-              <span className="cap">after the exam: tested, counselled, offer, seat</span>
+              <span className="cap">
+                {postTest.length ? `after the exam · ${postTest.map((r) => r.label.toLowerCase()).join(" · ")}` : "after the exam"}
+              </span>
             </header>
             <FunnelCallTable
               rows={postTest}

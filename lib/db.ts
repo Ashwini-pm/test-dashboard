@@ -62,20 +62,31 @@ function open(): Database.Database {
 const db: Database.Database = global.__nsatDb ?? open();
 if (process.env.NODE_ENV !== "production") global.__nsatDb = db;
 
+// PostgREST caps a response at 1000 rows, so a 19k-row table needs 19 requests.
+// Doing them sequentially was the whole first-sync cost (~10s). Ask for the count
+// once, then fetch every page concurrently.
 async function pullTable(supaTable: string): Promise<Record<string, unknown>[]> {
   const PAGE = 1000;
-  const rows: Record<string, unknown>[] = [];
-  for (let from = 0; ; from += PAGE) {
-    const { data, error } = await supabase
-      .from(supaTable)
-      .select("*")
-      .range(from, from + PAGE - 1);
-    if (error) throw new Error(`${supaTable}: ${error.message}`);
-    if (!data || data.length === 0) break;
-    rows.push(...(data as Record<string, unknown>[]));
-    if (data.length < PAGE) break;
-  }
-  return rows;
+  const { count, error: cErr } = await supabase
+    .from(supaTable)
+    .select("*", { count: "exact", head: true });
+  if (cErr) throw new Error(`${supaTable} count: ${cErr.message}`);
+  const total = count ?? 0;
+  if (total === 0) return [];
+  const pages = Math.ceil(total / PAGE);
+  const chunks = await Promise.all(
+    Array.from({ length: pages }, (_, i) =>
+      supabase
+        .from(supaTable)
+        .select("*")
+        .range(i * PAGE, i * PAGE + PAGE - 1)
+        .then(({ data, error }) => {
+          if (error) throw new Error(`${supaTable}: ${error.message}`);
+          return (data ?? []) as Record<string, unknown>[];
+        })
+    )
+  );
+  return chunks.flat();
 }
 
 function repopulate(table: string, rows: Record<string, unknown>[]): void {
@@ -117,6 +128,7 @@ function repopulate(table: string, rows: Record<string, unknown>[]): void {
 }
 
 async function refresh(): Promise<void> {
+  const T0 = Date.now();
   db.pragma("foreign_keys = OFF"); // robust even if a cached (dev global) db had it on
   if (!supabaseConfigured) {
     console.warn("[db] Supabase not configured - serving empty in-memory DB");
@@ -159,7 +171,44 @@ async function refresh(): Promise<void> {
   }
   deriveStages();
   enrichNsat3MapCalls();
+  buildMapIndexes();
+  console.log(`[db] hydrate ${Date.now() - T0}ms`);
   global.__nsatLoadedAt = Date.now();
+}
+
+// The map tables are built fresh each hydrate, so index them here. Without this
+// the post-test queries do a correlated scan per map row (24 counts x thousands
+// of rows) and every page render paid for it.
+function buildMapIndexes(): void {
+  const run = (sql: string) => { try { db.exec(sql); } catch { /* table may not exist */ } };
+  run("CREATE INDEX IF NOT EXISTS ix_n3map_lead ON nsat3_map(lead_id)");
+  run("CREATE INDEX IF NOT EXISTS ix_csatmap_lead ON csat_map(lead_id)");
+  run("CREATE INDEX IF NOT EXISTS ix_csatmap_tag ON csat_map(round_tag)");
+  run("CREATE INDEX IF NOT EXISTS ix_n4map_lead ON nsat4_map(lead_id)");
+  run("CREATE INDEX IF NOT EXISTS ix_leads_student ON leads(student_id)");
+  run("CREATE INDEX IF NOT EXISTS ix_leads_round ON leads(nsat_round)");
+  // Post-test stage membership, precomputed ONCE per hydrate and keyed the way the
+  // maps are keyed. Replaces the per-row EXISTS subqueries in postTestTable/drill.
+  run(`
+    DROP TABLE IF EXISTS stage_flags;
+    CREATE TABLE stage_flags AS
+    SELECT COALESCE(NULLIF(TRIM(l.student_id),''), l.lead_id) AS k,
+           l.nsat_round AS rnd,
+           MAX(CASE WHEN t.appeared=1 THEN 1 ELSE 0 END)                     AS tested,
+           MAX(CASE WHEN t.result='pass' THEN 1 ELSE 0 END)                  AS passed,
+           MAX(CASE WHEN cs.scheduled_at IS NOT NULL THEN 1 ELSE 0 END)      AS slot,
+           MAX(CASE WHEN cs.status='held' THEN 1 ELSE 0 END)                 AS couns,
+           MAX(CASE WHEN cs.status IN ('held','no_show','reschedule') THEN 1 ELSE 0 END) AS cohort,
+           MAX(CASE WHEN o.lead_id IS NOT NULL THEN 1 ELSE 0 END)            AS ol,
+           MAX(CASE WHEN p.paid_at >= '2026-07-16' THEN 1 ELSE 0 END)        AS seat
+      FROM leads l
+      LEFT JOIN test_results t         ON t.lead_id  = l.lead_id
+      LEFT JOIN counselling_sessions cs ON cs.lead_id = l.lead_id
+      LEFT JOIN offer_letters o        ON o.lead_id  = l.lead_id
+      LEFT JOIN payments p             ON p.lead_id  = l.lead_id
+     GROUP BY 1, 2;
+    CREATE INDEX IF NOT EXISTS ix_sflags ON stage_flags(k, rnd);
+  `);
 }
 
 // NSAT-3's calling data lives in call_logs (human_call), not in nsat3_lead_map,
@@ -324,20 +373,29 @@ async function fetchCsatProject(): Promise<CsatPull | null> {
   const url = process.env.CSAT_SUPABASE_URL;
   const key = process.env.CSAT_SUPABASE_ANON_KEY;
   if (!url || !key) return null;
+  const H = { apikey: key, Authorization: `Bearer ${key}` };
+  // One HEAD for the row count, then all pages concurrently (was sequential).
   const pull = async (table: string) => {
     const PAGE = 1000;
-    const rows: Record<string, any>[] = [];
-    for (let from = 0; ; from += PAGE) {
-      const res = await fetch(
-        `${url}/rest/v1/${table}?select=*&limit=${PAGE}&offset=${from}`,
-        { headers: { apikey: key, Authorization: `Bearer ${key}` }, cache: "no-store", signal: AbortSignal.timeout(20000) }
-      );
-      if (!res.ok) throw new Error(`${table}: HTTP ${res.status}`);
-      const page = (await res.json()) as Record<string, any>[];
-      rows.push(...page);
-      if (page.length < PAGE) break;
-    }
-    return rows;
+    const head = await fetch(`${url}/rest/v1/${table}?select=*&limit=1`, {
+      headers: { ...H, Prefer: "count=exact", Range: "0-0" },
+      cache: "no-store", signal: AbortSignal.timeout(20000),
+    });
+    if (!head.ok) throw new Error(`${table}: HTTP ${head.status}`);
+    const total = Number((head.headers.get("content-range") || "").split("/")[1] || 0);
+    if (!total) return [];
+    const pages = Math.ceil(total / PAGE);
+    const chunks = await Promise.all(
+      Array.from({ length: pages }, (_, i) =>
+        fetch(`${url}/rest/v1/${table}?select=*&limit=${PAGE}&offset=${i * PAGE}`, {
+          headers: H, cache: "no-store", signal: AbortSignal.timeout(30000),
+        }).then(async (res) => {
+          if (!res.ok) throw new Error(`${table}: HTTP ${res.status}`);
+          return (await res.json()) as Record<string, any>[];
+        })
+      )
+    );
+    return chunks.flat();
   };
   return Promise.all(
     ["nsat4", "bba", "bca", "combined", "nsat3_lead_map", "lead_map", "nsat4_lead_map"].map(async (t) => ({ table: t, rows: await pull(t) }))

@@ -375,20 +375,19 @@ export function postTestTable(ctx: Ctx, round?: string | null): FunnelCallRow[] 
     return out;
   }
   const inc = inClause(ctx, round);
-  const COH = "x.lead_id IN (SELECT lead_id FROM counselling_sessions WHERE status IN ('held','no_show','reschedule'))";
-  const defs: [string, string, string, string][] = [
-    ["test",  "Test given",   "test_results",          "x.appeared=1"],
-    ["pass",  "Passed",       "test_results",          "x.result='pass'"],
-    ["slot",  "Slot booked",  "counselling_sessions",  "x.scheduled_at IS NOT NULL"],
-    ["couns", "Counselled",   "counselling_sessions",  "x.status='held'"],
-    ["ol",    "Offer letter", "offer_letters",         COH],
-    ["seat",  "Seat booked",  "payments",              `x.paid_at >= '2026-07-16' AND ${COH}`],
+  // stage_flags is precomputed per hydrate (see db.ts buildMapIndexes), keyed the
+  // same way the maps are keyed. One indexed lookup instead of a correlated scan.
+  const defs: [string, string, string][] = [
+    ["test",  "Test given",   "tested=1"],
+    ["pass",  "Passed",       "passed=1"],
+    ["slot",  "Slot booked",  "slot=1"],
+    ["couns", "Counselled",   "couns=1"],
+    ["ol",    "Offer letter", "ol=1 AND cohort=1"],
+    ["seat",  "Seat booked",  "seat=1 AND cohort=1"],
   ];
   const out: FunnelCallRow[] = [];
-  for (const [key, label, tbl, cond] of defs) {
-    const scope = ` AND EXISTS (SELECT 1 FROM ${tbl} x JOIN leads l ON l.lead_id = x.lead_id
-      WHERE (l.student_id = m.lead_id OR l.lead_id = m.lead_id)
-        AND l.nsat_round IN (${inc}) AND ${cond})`;
+  for (const [key, label, cond] of defs) {
+    const scope = ` AND m.lead_id IN (SELECT k FROM stage_flags WHERE rnd IN (${inc}) AND ${cond})`;
     let cols;
     try { cols = callCols(m, scope); } catch { continue; }
     if (cols.total > 0) out.push({ key, label, ...cols, drill: `pstage=${key}` });
@@ -523,22 +522,18 @@ export function drill(ctx: Ctx, round: string | null | undefined, p: DrillParams
     if (p.pstage === "seat") { w.push("m.seat_booked = 'Yes'"); bits.push("seat booked"); }
   } else if (p.pstage) {
     const inc2 = inClause(ctx, round);
-    const COH = "x.lead_id IN (SELECT lead_id FROM counselling_sessions WHERE status IN ('held','no_show','reschedule'))";
-    const S: Record<string, [string, string, string]> = {
-      test:  ["test_results", "x.appeared=1", "test given"],
-      pass:  ["test_results", "x.result='pass'", "passed"],
-      slot:  ["counselling_sessions", "x.scheduled_at IS NOT NULL", "slot booked"],
-      couns: ["counselling_sessions", "x.status='held'", "counselled"],
-      ol:    ["offer_letters", COH, "offer letter"],
-      seat:  ["payments", `x.paid_at >= '2026-07-16' AND ${COH}`, "seat booked"],
+    const S: Record<string, [string, string]> = {
+      test:  ["tested=1", "test given"],
+      pass:  ["passed=1", "passed"],
+      slot:  ["slot=1", "slot booked"],
+      couns: ["couns=1", "counselled"],
+      ol:    ["ol=1 AND cohort=1", "offer letter"],
+      seat:  ["seat=1 AND cohort=1", "seat booked"],
     };
     const hit = S[p.pstage];
     if (hit) {
-      const [tbl, cond, lbl] = hit;
-      w.push(`EXISTS (SELECT 1 FROM ${tbl} x JOIN leads l ON l.lead_id = x.lead_id
-        WHERE (l.student_id = m.lead_id OR l.lead_id = m.lead_id)
-          AND l.nsat_round IN (${inc2}) AND ${cond})`);
-      bits.push(lbl);
+      w.push(`m.lead_id IN (SELECT k FROM stage_flags WHERE rnd IN (${inc2}) AND ${hit[0]})`);
+      bits.push(hit[1]);
     }
   }
   if (p.origin?.length) {
