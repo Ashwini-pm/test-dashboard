@@ -1,7 +1,14 @@
 import Link from "next/link";
 import { ensureFresh } from "@/lib/db";
-import { parseCtx, stageCounts, roundOptions, defaultRound, ctxRounds, sankeyTree } from "@/lib/v2";
+import {
+  parseCtx, stageCounts, roundOptions, defaultRound, ctxRounds, sankeyTree, sourceStages, sourceLegend,
+  coverageAvailable, actionCoverage, untouchedAgeing, sourceAction, speedToLead,
+  preTestTable, postTestTable,
+} from "@/lib/v2";
 import Sankey from "@/components/Sankey";
+import SourcePie from "@/components/SourcePie";
+import FunnelCallTable from "@/components/FunnelCallTable";
+import { ActionCoverage, UntouchedAgeing, SourceActionTable, SpeedToLead } from "@/components/CoverageViews";
 import { funnel, type Round } from "@/lib/queries";
 import FunnelView from "@/components/FunnelView";
 import RoundSelect from "@/components/RoundSelect";
@@ -17,8 +24,21 @@ export default async function Overview({ searchParams }: { searchParams: Promise
   const round = sp.round || defaultRound(ctx);
   const qs = `${ctx === "CSAT" ? "&ctx=CSAT" : ""}${round ? `&round=${round}` : ""}`;
   const s = stageCounts(ctx, round);
-  const f = funnel(ctxRounds(ctx, round)[0] as Round);
+  // CSAT "All" spans BBA/BCA/Combined -> use the combined "CSAT" funnel; else the single round.
+  const funnelRound = ctx === "CSAT" && ctxRounds(ctx, round).length > 1 ? "CSAT" : ctxRounds(ctx, round)[0];
+  const f = funnel(funnelRound as Round);
   const tree = sankeyTree(ctx, round);
+  const srcStages = sourceStages(ctx, round);
+  // base query for drill-down links (no leading &)
+  const dq = `${ctx === "CSAT" ? "ctx=CSAT&" : ""}round=${round}`;
+  // Coverage views only render where the map actually carries calling data.
+  const hasCoverage = coverageAvailable(ctx, round);
+  const buckets = hasCoverage ? actionCoverage(ctx, round) : [];
+  const untouched = hasCoverage ? untouchedAgeing(ctx, round) : null;
+  const srcAct = hasCoverage ? sourceAction(ctx, round) : [];
+  const speed = hasCoverage ? speedToLead(ctx, round) : [];
+  const preTest = hasCoverage ? preTestTable(ctx, round) : [];
+  const postTest = hasCoverage ? postTestTable(ctx, round) : [];
   const maxCount = Math.max(1, ...f.rows.filter((r) => r.count !== null).map((r) => r.count as number));
   // The four numbers the CBO tracks — same funnel everywhere, that's the point.
   const kpis: [string, number][] = [
@@ -61,12 +81,101 @@ export default async function Overview({ searchParams }: { searchParams: Promise
       {/* Flow sankey */}
       <section className="grid mb">
         <div className="card">
-          <header><h3>Flow</h3><span className="cap">click any box: progressed vs dropped, and whether the dropped were even called</span></header>
-          <Sankey root={tree} />
+          <header><h3>Flow</h3><span className="cap">click a box to expand · click a number to open that student list</span></header>
+          <Sankey root={tree} qs={dq} />
         </div>
       </section>
 
+      {/* Source-wise stage split — source is the CRM's category, not the student's utm */}
+      <section className="grid mb">
+        <div className="card">
+          <header>
+            <h3>Stages by source</h3>
+            <span className="cap">CRM source category (not form utm) · {round}</span>
+          </header>
+          <SourcePie stages={srcStages} legend={sourceLegend(srcStages)} qs={dq} />
+        </div>
+      </section>
 
+      {/* Pre test / Post test call funnels */}
+      {hasCoverage && (
+        <>
+        <section className="grid mb">
+          <div className="card">
+            <header>
+              <h3>Pre test</h3>
+              <span className="cap">calling coverage before the exam · every cell opens its list</span>
+            </header>
+            <FunnelCallTable rows={preTest} qs={dq} />
+          </div>
+        </section>
+        <section className="grid mb">
+          <div className="card">
+            <header>
+              <h3>Post test</h3>
+              <span className="cap">after the exam: tested, counselled, offer, seat</span>
+            </header>
+            <FunnelCallTable
+              rows={postTest}
+              qs={dq}
+              emptyNote={`No post-test data for ${round}: this cohort has no test or counselling rows yet, so there is nothing to split. It fills in once the exam and counselling feeds land.`}
+            />
+          </div>
+        </section>
+        </>
+      )}
+
+      {hasCoverage && (
+        <>
+          {/* Did we work the lead at all */}
+          <section className="grid mb">
+            <div className="card">
+              <header>
+                <h3>Action coverage</h3>
+                <span className="cap">every lead sits in exactly one bucket · {round}</span>
+              </header>
+              <ActionCoverage buckets={buckets} qs={dq} />
+            </div>
+          </section>
+
+          {/* The worklist: unregistered and never called, by age */}
+          {untouched && untouched.total > 0 && (
+            <section className="grid mb">
+              <div className="card">
+                <header>
+                  <h3>Untouched &amp; ageing</h3>
+                  <span className="cap">not registered and never called, by time since signup</span>
+                </header>
+                <UntouchedAgeing data={untouched} qs={dq} />
+              </div>
+            </section>
+          )}
+
+          {/* Who we neglect */}
+          <section className="grid mb">
+            <div className="card">
+              <header>
+                <h3>Source × action</h3>
+                <span className="cap">calling coverage per CRM source</span>
+              </header>
+              <SourceActionTable rows={srcAct} qs={dq} />
+            </div>
+          </section>
+
+          {/* Time to first call */}
+          {speed.length > 0 && (
+            <section className="grid mb">
+              <div className="card">
+                <header>
+                  <h3>Speed to lead</h3>
+                  <span className="cap">time from signup to first call</span>
+                </header>
+                <SpeedToLead bands={speed} qs={dq} />
+              </div>
+            </section>
+          )}
+        </>
+      )}
     </>
   );
 }

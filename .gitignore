@@ -12,3 +12,6 @@ mock-data/
 automation/
 docs/SLOT_STREAM_HANDOFF.md
 dashboard/
+
+# local backups of the pre-port data layer
+*.v2bak

@@ -22,11 +22,11 @@ export function ctxRounds(ctx: Ctx, round?: string | null): string[] {
   return ["NSAT-2", "NSAT-3", "NSAT-4"];
 }
 export function roundOptions(ctx: Ctx): string[] {
-  return ctx === "CSAT" ? ["BBA", "BCA", "Combined"] : ["NSAT-2", "NSAT-3", "NSAT-4"];
+  return ctx === "CSAT" ? ["All", "BBA", "BCA", "Combined"] : ["NSAT-2", "NSAT-3", "NSAT-4"];
 }
 // No "All": rounds are separate cohorts. Default = the running round.
 export function defaultRound(ctx: Ctx): string {
-  return ctx === "CSAT" ? "BBA" : "NSAT-3";
+  return ctx === "CSAT" ? "All" : "NSAT-3";
 }
 export function inClause(ctx: Ctx, round?: string | null): string {
   return ctxRounds(ctx, round).map((r) => `'${r}'`).join(",");
@@ -43,6 +43,14 @@ export const SLA = {
 
 const int = (row: any): number => Number((row && (row.n ?? row)) || 0);
 const q = (sql: string) => int(db.prepare(sql).get() as any);
+// csat_map = the lead_map reconciliation (deduped bba/bca/combined + crm_only),
+// hydrated by db.ts. round_tag values are CSAT-BBA/BCA/COMB, matching the enum.
+const csatMapReady = (): boolean => {
+  try {
+    if (!int(db.prepare("SELECT COUNT(*) n FROM sqlite_master WHERE type='table' AND name='csat_map'").get() as any)) return false;
+    return int(db.prepare("SELECT COUNT(*) n FROM csat_map").get() as any) > 0;
+  } catch { return false; }
+};
 
 // ---------------------------------------------------------------------------
 // Core stage counts (same definitions the v1 dashboard settled on)
@@ -56,9 +64,16 @@ export function stageCounts(ctx: Ctx, round?: string | null): StageCounts {
   const jl = (t: string, extra = "") =>
     `SELECT COUNT(DISTINCT x.lead_id) n FROM ${t} x JOIN leads l ON l.lead_id=x.lead_id WHERE l.nsat_round IN (${inc})${extra}`;
   const COH = ` AND x.lead_id IN (SELECT lead_id FROM counselling_sessions WHERE status IN ('held','no_show','reschedule'))`;
+  // CSAT Lead + Registration come from the lead_map reconciliation (csat_map),
+  // not the raw base tables. Downstream stages stay 0 for CSAT (no such data).
+  const useCsatMap = ctx === "CSAT" && csatMapReady();
   return {
-    leads: q(`SELECT COUNT(*) n FROM leads WHERE nsat_round IN (${inc})`),
-    paid: q(`SELECT COUNT(DISTINCT lead_id) n FROM registrations WHERE nsat_round IN (${inc})`),
+    leads: useCsatMap
+      ? q(`SELECT COUNT(*) n FROM csat_map WHERE round_tag IN (${inc})`)
+      : q(`SELECT COUNT(*) n FROM leads WHERE nsat_round IN (${inc})`),
+    paid: useCsatMap
+      ? q(`SELECT COUNT(*) n FROM csat_map WHERE round_tag IN (${inc}) AND registered='paid'`)
+      : q(`SELECT COUNT(DISTINCT lead_id) n FROM registrations WHERE nsat_round IN (${inc})`),
     appeared: q(jl("test_results", " AND x.appeared=1")),
     pass: q(jl("test_results", " AND x.result='pass'")),
     fail: q(jl("test_results", " AND x.result='fail'")),
@@ -67,6 +82,504 @@ export function stageCounts(ctx: Ctx, round?: string | null): StageCounts {
     offers: q(jl("offer_letters", COH)),
     seats: q(jl("payments", " AND x.paid_at >= '2026-07-16'" + COH)),
   };
+}
+
+// ---------------------------------------------------------------------------
+// Source-wise stage breakdown (stacked bars under the Sankey)
+// ---------------------------------------------------------------------------
+// Source ALWAYS comes from the reconciliation map's crm_source_category (what
+// the CRM assigned the lead) — never the utm_source the student picked on the
+// form. Map = lead_map (CSAT) / nsat3_lead_map (NSAT-3), hydrated by db.ts.
+export const NO_SRC = "No CRM source";
+// Does an in-memory map table exist AND carry rows? (hydration may skip it)
+function hasRows(t: string): boolean {
+  try {
+    if (!int(db.prepare(`SELECT COUNT(*) n FROM sqlite_master WHERE type='table' AND name='${t}'`).get() as any)) return false;
+    return int(db.prepare(`SELECT COUNT(*) n FROM ${t}`).get() as any) > 0;
+  } catch { return false; }
+}
+export const csatMapHasRows = () => hasRows("csat_map");
+// Fixed order so colors stay stable across rounds; anything unseen appends.
+const SRC_ORDER = [
+  "Influencers", "Organic", "Direct", "Inbound",
+  "Youtube Channels", "Paid Performance Google", "Instagram Organic", "Others", NO_SRC,
+];
+export interface SourceStage {
+  key: string;
+  label: string;
+  total: number;
+  totalCalled: number;
+  // called = human-calling reach from the map (total_calls > 0), shown as "n | called"
+  parts: { src: string; n: number; called: number }[];
+}
+function mapTableFor(ctx: Ctx, round?: string | null): { table: string; where: string } | null {
+  const has = hasRows;
+  if (ctx === "CSAT" && has("csat_map")) {
+    return { table: "csat_map", where: ` AND m.round_tag IN (${inClause(ctx, round)})` };
+  }
+  if (ctx === "NSAT" && (!round || round === "NSAT-3") && has("nsat3_map")) {
+    return { table: "nsat3_map", where: "" };
+  }
+  // NSAT-4 has its own map, and it carries offer_letter / seat_booked inline.
+  if (ctx === "NSAT" && round === "NSAT-4" && has("nsat4_map")) {
+    return { table: "nsat4_map", where: "" };
+  }
+  return null;
+}
+export function sourceStages(ctx: Ctx, round?: string | null): SourceStage[] {
+  const m = mapTableFor(ctx, round);
+  if (!m) return [];
+  const inc = inClause(ctx, round);
+  const paidCol = m.table === "nsat3_map" ? "reg_status" : "registered";
+  const src = `coalesce(nullif(m.crm_source_category,''),'${NO_SRC}')`;
+  // Stage counts split by source. Lead/Registration read the map directly (it IS
+  // the deduped universe); later stages join the map onto the stage tables.
+  const CALLED = "SUM(CASE WHEN coalesce(m.total_calls,0) > 0 THEN 1 ELSE 0 END)";
+  const fromMap = (extra: string) =>
+    `SELECT ${src} s, COUNT(*) n, ${CALLED} called FROM ${m.table} m WHERE 1=1${m.where}${extra} GROUP BY 1`;
+  const viaStage = (t: string, extra = "") =>
+    `SELECT ${src} s, COUNT(DISTINCT x.lead_id) n, ${CALLED} called FROM ${t} x
+       JOIN leads l ON l.lead_id = x.lead_id
+       JOIN ${m.table} m ON (m.lead_id = l.student_id OR m.lead_id = l.lead_id)
+      WHERE l.nsat_round IN (${inc})${m.where}${extra} GROUP BY 1`;
+  const COH = ` AND x.lead_id IN (SELECT lead_id FROM counselling_sessions WHERE status IN ('held','no_show','reschedule'))`;
+  const defs: [string, string, string][] = [
+    ["lead", "Lead", fromMap("")],
+    ["registration", "Registration", fromMap(` AND m.${paidCol}='paid'`)],
+    ["test", "Test", viaStage("test_results", " AND x.appeared=1")],
+    ["result", "Result: Pass", viaStage("test_results", " AND x.result='pass'")],
+    ["slot_form", "Slot Form", viaStage("counselling_sessions", " AND x.scheduled_at IS NOT NULL")],
+    ["counselling", "Counselling", viaStage("counselling_sessions", " AND x.status='held'")],
+    ["offer_letter", "Offer Letter", viaStage("offer_letters", COH)],
+    ["seat_payment", "Seat Payment", viaStage("payments", " AND x.paid_at >= '2026-07-16'" + COH)],
+  ];
+  const out: SourceStage[] = [];
+  for (const [key, label, sql] of defs) {
+    let rows: { s: string; n: number; called: number }[] = [];
+    try { rows = db.prepare(sql).all() as { s: string; n: number; called: number }[]; } catch { rows = []; }
+    const parts = rows
+      .filter((r) => Number(r.n) > 0)
+      .sort((a, b) => {
+        const ia = SRC_ORDER.indexOf(a.s), ib = SRC_ORDER.indexOf(b.s);
+        return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib);
+      })
+      .map((r) => ({ src: r.s, n: Number(r.n), called: Number(r.called ?? 0) }));
+    const total = parts.reduce((a, b) => a + b.n, 0);
+    const totalCalled = parts.reduce((a, b) => a + b.called, 0);
+    if (total > 0) out.push({ key, label, total, totalCalled, parts });
+  }
+  return out;
+}
+export function sourceLegend(stages: SourceStage[]): string[] {
+  const seen = new Set<string>();
+  for (const st of stages) for (const p of st.parts) seen.add(p.src);
+  return SRC_ORDER.filter((s) => seen.has(s)).concat([...seen].filter((s) => !SRC_ORDER.includes(s)));
+}
+
+// ---------------------------------------------------------------------------
+// Coverage views — "did we do our job", as distinct from "did it convert".
+// ---------------------------------------------------------------------------
+// All read the reconciliation map (lead_map / nsat3_lead_map). Calling here is a
+// REMEDIATION action aimed at people who did not register, so these are coverage
+// metrics: never divide them into conversion rates and call it causation.
+const paidColFor = (t: string) => (t === "nsat3_map" ? "reg_status" : "registered");
+
+export function coverageAvailable(ctx: Ctx, round?: string | null): boolean {
+  const m = mapTableFor(ctx, round);
+  if (!m) return false;
+  try {
+    return int(db.prepare(`SELECT COUNT(*) n FROM ${m.table} m WHERE coalesce(m.total_calls,0) > 0${m.where}`).get() as any) > 0;
+  } catch { return false; }
+}
+
+export interface ActionBucket { key: string; label: string; leads: number; registered: number; notRegistered: number; }
+export function actionCoverage(ctx: Ctx, round?: string | null): ActionBucket[] {
+  const m = mapTableFor(ctx, round);
+  if (!m) return [];
+  const p = paidColFor(m.table);
+  const row = (key: string, label: string, cond: string): ActionBucket => {
+    const r = db.prepare(
+      `SELECT COUNT(*) leads,
+              SUM(CASE WHEN m.${p}='paid' THEN 1 ELSE 0 END) reg
+         FROM ${m.table} m WHERE ${cond}${m.where}`
+    ).get() as any;
+    const leads = Number(r?.leads ?? 0), registered = Number(r?.reg ?? 0);
+    return { key, label, leads, registered, notRegistered: leads - registered };
+  };
+  return [
+    row("never", "Never called", "coalesce(m.total_calls,0)=0"),
+    row("noconn", "Called, no answer", "coalesce(m.total_calls,0)>0 AND coalesce(m.connected_calls,0)=0"),
+    row("conn", "Connected", "coalesce(m.connected_calls,0)>0"),
+  ];
+}
+
+export interface AgeBand { key: string; label: string; n: number; tone: "good" | "warn" | "bad"; }
+export interface Untouched { total: number; bands: AgeBand[]; noCounsellor: number; }
+export function untouchedAgeing(ctx: Ctx, round?: string | null): Untouched | null {
+  const m = mapTableFor(ctx, round);
+  if (!m) return null;
+  const p = paidColFor(m.table);
+  // untouched = not registered AND never called
+  const base = `m.${p}<>'paid' AND coalesce(m.total_calls,0)=0${m.where}`;
+  const band = (cond: string) =>
+    int(db.prepare(`SELECT COUNT(*) n FROM ${m.table} m WHERE ${base} AND m.first_signup IS NOT NULL AND ${cond}`).get() as any);
+  const age = "(julianday('now') - julianday(m.first_signup)) * 24";
+  const bands: AgeBand[] = [
+    { key: "b1", label: "0–8h", n: band(`${age} < 8`), tone: "good" },
+    { key: "b2", label: "8–24h", n: band(`${age} >= 8 AND ${age} < 24`), tone: "warn" },
+    { key: "b3", label: "24–72h", n: band(`${age} >= 24 AND ${age} < 72`), tone: "bad" },
+    { key: "b4", label: "72h+", n: band(`${age} >= 72`), tone: "bad" },
+  ];
+  let noCounsellor = 0;
+  try {
+    noCounsellor = int(db.prepare(`SELECT COUNT(*) n FROM ${m.table} m WHERE nullif(m.counsellor,'') IS NULL${m.where}`).get() as any);
+  } catch { noCounsellor = 0; }
+  return { total: int(db.prepare(`SELECT COUNT(*) n FROM ${m.table} m WHERE ${base}`).get() as any), bands, noCounsellor };
+}
+
+export interface SourceAction { src: string; leads: number; called: number; connected: number; }
+export function sourceAction(ctx: Ctx, round?: string | null): SourceAction[] {
+  const m = mapTableFor(ctx, round);
+  if (!m) return [];
+  const src = `coalesce(nullif(m.crm_source_category,''),'${NO_SRC}')`;
+  const rows = db.prepare(
+    `SELECT ${src} s, COUNT(*) leads,
+            SUM(CASE WHEN coalesce(m.total_calls,0)>0 THEN 1 ELSE 0 END) called,
+            SUM(CASE WHEN coalesce(m.connected_calls,0)>0 THEN 1 ELSE 0 END) connected
+       FROM ${m.table} m WHERE 1=1${m.where} GROUP BY 1 ORDER BY 2 DESC`
+  ).all() as any[];
+  return rows.map((r) => ({ src: String(r.s), leads: Number(r.leads), called: Number(r.called), connected: Number(r.connected) }));
+}
+
+export interface SpeedBand { key: string; label: string; n: number; }
+export function speedToLead(ctx: Ctx, round?: string | null): SpeedBand[] {
+  const m = mapTableFor(ctx, round);
+  if (!m) return [];
+  const hrs = "(julianday(m.first_call_at) - julianday(m.first_signup)) * 24";
+  const base = `m.first_call_at IS NOT NULL AND m.first_signup IS NOT NULL${m.where}`;
+  const b = (cond: string) => int(db.prepare(`SELECT COUNT(*) n FROM ${m.table} m WHERE ${base} AND ${cond}`).get() as any);
+  return [
+    { key: "s0", label: "within 1 hr", n: b(`${hrs} >= 0 AND ${hrs} <= 1`) },
+    { key: "s1", label: "1–24 hrs", n: b(`${hrs} > 1 AND ${hrs} <= 24`) },
+    { key: "s2", label: "1–3 days", n: b(`${hrs} > 24 AND ${hrs} <= 72`) },
+    { key: "s3", label: "3+ days", n: b(`${hrs} > 72`) },
+    { key: "s4", label: "called before signup", n: b(`${hrs} < 0`) },
+  ].filter((x) => x.n > 0);
+}
+
+// ---------------------------------------------------------------------------
+// Pre/Post test call tree — Lead and Registered each split called / not called,
+// then called splits picked / not picked (same shape as the Sankey).
+// ---------------------------------------------------------------------------
+// NOTE: the map holds ONE call aggregate per lead (total_calls / connected_calls)
+// and no registration timestamp, so "registered AND called" cannot be resolved
+// into "called before vs after registering". Counts are nested, not exclusive:
+// registered-called is a SUBSET of lead-called.
+export interface CallNode {
+  key: string; label: string; n: number; tone?: "good" | "warn" | "bad" | "info";
+  drill?: string; children?: CallNode[];
+}
+// Two sides, split down the middle: Lead -> Registered (left) and
+// Lead -> Not registered (right). Calling is aimed at the NOT-registered side,
+// so that is the one that carries the actionable funnel.
+export function preTestTree(ctx: Ctx, round?: string | null): CallNode[] {
+  const m = mapTableFor(ctx, round);
+  if (!m) return [];
+  const paid = paidColFor(m.table);
+  const c = (extra: string) =>
+    int(db.prepare(`SELECT COUNT(*) n FROM ${m.table} m WHERE 1=1${m.where}${extra}`).get() as any);
+
+  const leadTotal = c("");
+  const side = (key: string, label: string, scope: string, drillScope: string, tone: CallNode["tone"]): CallNode => {
+    const total = c(scope);
+    const called = c(`${scope} AND coalesce(m.total_calls,0)>0`);
+    const notCalled = c(`${scope} AND coalesce(m.total_calls,0)=0`);
+    const picked = c(`${scope} AND coalesce(m.connected_calls,0)>0`);
+    return {
+      key: "lead:" + key, label: "Lead", n: leadTotal, tone: "info", drill: "stage=lead",
+      children: [{
+        key, label, n: total, tone,
+        drill: drillScope,
+        children: [
+          {
+            key: `${key}:called`, label: "Called", n: called, tone: "good",
+            drill: `${drillScope}&act=called`,
+            children: [
+              { key: `${key}:picked`, label: "Picked up", n: picked, tone: "good", drill: `${drillScope}&conn=1` },
+              { key: `${key}:notpicked`, label: "Did not pick", n: called - picked, tone: "warn", drill: `${drillScope}&act=noconn` },
+            ],
+          },
+          { key: `${key}:notcalled`, label: "Not called", n: notCalled, tone: "bad", drill: `${drillScope}&act=never` },
+        ],
+      }],
+    };
+  };
+
+  return [
+    side("reg", "Registered", ` AND m.${paid}='paid'`, "reg=paid", "good"),
+    side("unreg", "Not registered", ` AND m.${paid}<>'paid'`, "reg=unpaid", "bad"),
+  ];
+}
+
+// Pre/post test as TABLES: one row per stage, columns = calling coverage.
+export interface FunnelCallRow {
+  key: string; label: string; total: number; called: number;
+  picked: number; notPicked: number; notCalled: number;
+  drill?: string; // base filter for this row; columns append their own
+}
+function callCols(m: { table: string; where: string }, scope: string) {
+  const c = (extra: string) =>
+    int(db.prepare(`SELECT COUNT(*) n FROM ${m.table} m WHERE 1=1${m.where}${scope}${extra}`).get() as any);
+  const total = c("");
+  const called = c(" AND coalesce(m.total_calls,0)>0");
+  const picked = c(" AND coalesce(m.connected_calls,0)>0");
+  return { total, called, picked, notPicked: called - picked, notCalled: c(" AND coalesce(m.total_calls,0)=0") };
+}
+export function preTestTable(ctx: Ctx, round?: string | null): FunnelCallRow[] {
+  const m = mapTableFor(ctx, round);
+  if (!m) return [];
+  const paid = paidColFor(m.table);
+  const rows: FunnelCallRow[] = [];
+  rows.push({ key: "lead", label: "Lead (all)", ...callCols(m, ""), drill: "stage=lead" });
+  rows.push({ key: "reg", label: "Registered", ...callCols(m, ` AND m.${paid}='paid'`), drill: "reg=paid" });
+  rows.push({ key: "unreg", label: "Not registered", ...callCols(m, ` AND m.${paid}<>'paid'`), drill: "reg=unpaid" });
+  return rows;
+}
+export function postTestTable(ctx: Ctx, round?: string | null): FunnelCallRow[] {
+  const m = mapTableFor(ctx, round);
+  if (!m) return [];
+  // NSAT-4: offer_letter / seat_booked are columns on the map itself.
+  if (m.table === "nsat4_map") {
+    const out: FunnelCallRow[] = [];
+    const defs: [string, string, string][] = [
+      ["ol", "Offer letter", " AND nullif(m.offer_letter,'') IS NOT NULL"],
+      ["seat", "Seat booked", " AND m.seat_booked = 'Yes'"],
+    ];
+    for (const [key, label, scope] of defs) {
+      const cols = callCols(m, scope);
+      if (cols.total > 0) out.push({ key, label, ...cols, drill: `pstage=${key}` });
+    }
+    return out;
+  }
+  const inc = inClause(ctx, round);
+  const COH = "x.lead_id IN (SELECT lead_id FROM counselling_sessions WHERE status IN ('held','no_show','reschedule'))";
+  const defs: [string, string, string, string][] = [
+    ["test",  "Test given",   "test_results",          "x.appeared=1"],
+    ["pass",  "Passed",       "test_results",          "x.result='pass'"],
+    ["slot",  "Slot booked",  "counselling_sessions",  "x.scheduled_at IS NOT NULL"],
+    ["couns", "Counselled",   "counselling_sessions",  "x.status='held'"],
+    ["ol",    "Offer letter", "offer_letters",         COH],
+    ["seat",  "Seat booked",  "payments",              `x.paid_at >= '2026-07-16' AND ${COH}`],
+  ];
+  const out: FunnelCallRow[] = [];
+  for (const [key, label, tbl, cond] of defs) {
+    const scope = ` AND EXISTS (SELECT 1 FROM ${tbl} x JOIN leads l ON l.lead_id = x.lead_id
+      WHERE (l.student_id = m.lead_id OR l.lead_id = m.lead_id)
+        AND l.nsat_round IN (${inc}) AND ${cond})`;
+    let cols;
+    try { cols = callCols(m, scope); } catch { continue; }
+    if (cols.total > 0) out.push({ key, label, ...cols, drill: `pstage=${key}` });
+  }
+  return out;
+}
+
+// Post-test needs test/counselling rows joined to calling data. Report what is
+// actually available rather than rendering zeros as if they were measurements.
+export function postTestAvailable(ctx: Ctx, round?: string | null): boolean {
+  const m = mapTableFor(ctx, round);
+  if (!m) return false;
+  const inc = inClause(ctx, round);
+  try {
+    const tested = int(db.prepare(
+      `SELECT COUNT(*) n FROM test_results x JOIN leads l ON l.lead_id=x.lead_id
+        WHERE l.nsat_round IN (${inc}) AND x.appeared=1`
+    ).get() as any);
+    if (!tested) return false;
+    // and does the map for this round carry calling data at all?
+    return int(db.prepare(`SELECT COUNT(*) n FROM ${m.table} m WHERE coalesce(m.total_calls,0)>0${m.where}`).get() as any) > 0;
+  } catch { return false; }
+}
+
+// ---------------------------------------------------------------------------
+// Drill-down: every stat above is a link into this, filtered by the same slice.
+// ---------------------------------------------------------------------------
+// Params are a closed set of enums/keys, never free SQL. Values that reach SQL
+// are either fixed literals or escaped below.
+export interface DrillParams {
+  src?: string[] | null;  // CRM source categories (or NO_SRC) — multi-select
+  stage?: string | null;  // "lead" | "reg"
+  act?: string | null;    // "never" | "noconn" | "conn"
+  reg?: string | null;    // "paid" | "unpaid"
+  age?: string | null;    // "b1".."b4"  (untouched ageing bands)
+  speed?: string | null;  // "s0".."s4"
+  nocouns?: string | null; // "1"
+  origin?: string[] | null; // both | capture_only | crm_only — multi-select
+  camp?: string[] | null;   // utm_campaign — multi-select
+  q?: string | null;       // free text: name / lead id / phone
+  id?: string | null;      // lead id contains
+  name?: string | null;    // name contains
+  phone?: string | null;   // phone contains
+  conn?: string | null;    // "1" connected, "0" not connected
+  pstage?: string | null;  // post-test stage: test|pass|slot|couns|ol|seat
+  couns?: string[] | null; // counsellor names, or "__none__" for unassigned — multi-select
+}
+
+// Distinct values for the filter dropdowns on the drill page.
+export function drillFacets(ctx: Ctx, round?: string | null):
+  { sources: string[]; campaigns: string[]; origins: string[]; counsellors: string[] } {
+  const m = mapTableFor(ctx, round);
+  if (!m) return { sources: [], campaigns: [], origins: [], counsellors: [] };
+  const col = (c: string, alias: string) => {
+    try {
+      return (db.prepare(
+        `SELECT DISTINCT coalesce(nullif(m.${c},''),'') ${alias} FROM ${m.table} m WHERE 1=1${m.where} ORDER BY 1`
+      ).all() as any[]).map((r) => String(r[alias])).filter(Boolean);
+    } catch { return []; }
+  };
+  return {
+    sources: col("crm_source_category", "v"),
+    campaigns: col("utm_campaign", "v"),
+    origins: col("origin", "v"),
+    counsellors: col("counsellor", "v"),
+  };
+}
+export interface DrillRow {
+  lead_id: string; name: string; phone: string; source: string; campaign: string;
+  registered: string; calls: number; connected: number; first_signup: string | null;
+  first_call_at: string | null; counsellor: string;
+}
+const esc = (s: string) => s.replace(/'/g, "''");
+
+export function drill(ctx: Ctx, round: string | null | undefined, p: DrillParams):
+  { rows: DrillRow[]; total: number; label: string } {
+  const m = mapTableFor(ctx, round);
+  if (!m) return { rows: [], total: 0, label: "no mapping for this round" };
+  const paid = paidColFor(m.table);
+  const w: string[] = ["1=1"];
+  const bits: string[] = [];
+  const age = "(julianday('now') - julianday(m.first_signup)) * 24";
+  const hrs = "(julianday(m.first_call_at) - julianday(m.first_signup)) * 24";
+
+  // multi-select: OR within a column, AND across columns
+  if (p.src?.length) {
+    const parts = p.src.map((v) =>
+      v === NO_SRC ? "nullif(m.crm_source_category,'') IS NULL" : `m.crm_source_category = '${esc(v)}'`);
+    w.push(`(${parts.join(" OR ")})`);
+    bits.push(p.src.join(" / "));
+  }
+  if (p.stage === "reg") { w.push(`m.${paid}='paid'`); bits.push("registered"); }
+  else if (p.stage === "lead") bits.push("all leads");
+
+  if (p.act === "never")  { w.push("coalesce(m.total_calls,0)=0"); bits.push("never called"); }
+  if (p.act === "called") { w.push("coalesce(m.total_calls,0)>0"); bits.push("called"); }
+  if (p.act === "noconn") { w.push("coalesce(m.total_calls,0)>0 AND coalesce(m.connected_calls,0)=0"); bits.push("called, no answer"); }
+  if (p.act === "conn")   { w.push("coalesce(m.connected_calls,0)>0"); bits.push("connected"); }
+
+  if (p.reg === "paid")   { w.push(`m.${paid}='paid'`); bits.push("registered"); }
+  if (p.reg === "unpaid") { w.push(`m.${paid}<>'paid'`); bits.push("not registered"); }
+
+  if (p.age) {
+    const band: Record<string, string> = {
+      b1: `${age} < 8`, b2: `${age} >= 8 AND ${age} < 24`,
+      b3: `${age} >= 24 AND ${age} < 72`, b4: `${age} >= 72`,
+    };
+    const lbl: Record<string, string> = { b1: "0–8h", b2: "8–24h", b3: "24–72h", b4: "72h+" };
+    if (band[p.age]) {
+      w.push(`m.${paid}<>'paid'`, "coalesce(m.total_calls,0)=0", "m.first_signup IS NOT NULL", band[p.age]);
+      bits.push(`untouched ${lbl[p.age]}`);
+    }
+  }
+  if (p.speed) {
+    const band: Record<string, string> = {
+      s0: `${hrs} >= 0 AND ${hrs} <= 1`, s1: `${hrs} > 1 AND ${hrs} <= 24`,
+      s2: `${hrs} > 24 AND ${hrs} <= 72`, s3: `${hrs} > 72`, s4: `${hrs} < 0`,
+    };
+    const lbl: Record<string, string> = {
+      s0: "first call within 1 hr", s1: "first call 1–24 hrs", s2: "first call 1–3 days",
+      s3: "first call 3+ days", s4: "called before signup",
+    };
+    if (band[p.speed]) {
+      w.push("m.first_call_at IS NOT NULL", "m.first_signup IS NOT NULL", band[p.speed]);
+      bits.push(lbl[p.speed]);
+    }
+  }
+  if (p.nocouns === "1") { w.push("nullif(m.counsellor,'') IS NULL"); bits.push("no counsellor"); }
+  // post-test stages live in the stage tables, not the map: match via leads.
+  if (p.pstage && m.table === "nsat4_map") {
+    if (p.pstage === "ol")   { w.push("nullif(m.offer_letter,'') IS NOT NULL"); bits.push("offer letter"); }
+    if (p.pstage === "seat") { w.push("m.seat_booked = 'Yes'"); bits.push("seat booked"); }
+  } else if (p.pstage) {
+    const inc2 = inClause(ctx, round);
+    const COH = "x.lead_id IN (SELECT lead_id FROM counselling_sessions WHERE status IN ('held','no_show','reschedule'))";
+    const S: Record<string, [string, string, string]> = {
+      test:  ["test_results", "x.appeared=1", "test given"],
+      pass:  ["test_results", "x.result='pass'", "passed"],
+      slot:  ["counselling_sessions", "x.scheduled_at IS NOT NULL", "slot booked"],
+      couns: ["counselling_sessions", "x.status='held'", "counselled"],
+      ol:    ["offer_letters", COH, "offer letter"],
+      seat:  ["payments", `x.paid_at >= '2026-07-16' AND ${COH}`, "seat booked"],
+    };
+    const hit = S[p.pstage];
+    if (hit) {
+      const [tbl, cond, lbl] = hit;
+      w.push(`EXISTS (SELECT 1 FROM ${tbl} x JOIN leads l ON l.lead_id = x.lead_id
+        WHERE (l.student_id = m.lead_id OR l.lead_id = m.lead_id)
+          AND l.nsat_round IN (${inc2}) AND ${cond})`);
+      bits.push(lbl);
+    }
+  }
+  if (p.origin?.length) {
+    w.push(`m.origin IN (${p.origin.map((v) => `'${esc(v)}'`).join(",")})`);
+    bits.push(p.origin.join(" / "));
+  }
+  if (p.camp?.length) {
+    w.push(`m.utm_campaign IN (${p.camp.map((v) => `'${esc(v)}'`).join(",")})`);
+    bits.push(p.camp.join(" / "));
+  }
+  if (p.q) {
+    const t = esc(p.q.trim());
+    if (t) {
+      w.push(`(m.lead_id LIKE '%${t}%' OR coalesce(m.name,'') LIKE '%${t}%' OR coalesce(m.phone,'') LIKE '%${t}%')`);
+      bits.push(`"${p.q.trim()}"`);
+    }
+  }
+  // per-column text filters
+  const like = (col: string, v: string | null | undefined, lbl: string) => {
+    const t = (v ?? "").trim();
+    if (!t) return;
+    w.push(`coalesce(m.${col},'') LIKE '%${esc(t)}%'`);
+    bits.push(`${lbl} ~ "${t}"`);
+  };
+  like("lead_id", p.id, "id");
+  like("name", p.name, "name");
+  like("phone", p.phone, "phone");
+  if (p.conn === "1") { w.push("coalesce(m.connected_calls,0)>0"); bits.push("connected"); }
+  if (p.conn === "0") { w.push("coalesce(m.connected_calls,0)=0"); bits.push("not connected"); }
+  if (p.couns?.length) {
+    const parts = p.couns.map((v) =>
+      v === "__none__" ? "nullif(m.counsellor,'') IS NULL" : `m.counsellor = '${esc(v)}'`);
+    w.push(`(${parts.join(" OR ")})`);
+    bits.push(p.couns.map((v) => (v === "__none__" ? "no counsellor" : v)).join(" / "));
+  }
+
+  const sql =
+    `SELECT m.lead_id, coalesce(m.name,'') name, coalesce(m.phone,'') phone,
+            coalesce(nullif(m.crm_source_category,''),'${NO_SRC}') source,
+            coalesce(m.utm_campaign,'') campaign,
+            coalesce(m.${paid},'') registered,
+            coalesce(m.total_calls,0) calls, coalesce(m.connected_calls,0) connected,
+            m.first_signup, m.first_call_at, coalesce(m.counsellor,'') counsellor
+       FROM ${m.table} m
+      WHERE ${w.join(" AND ")}${m.where}
+      ORDER BY m.first_signup DESC NULLS LAST
+      LIMIT 1000`;
+  let rows: DrillRow[] = [];
+  try { rows = db.prepare(sql).all() as DrillRow[]; } catch { rows = []; }
+  let total = rows.length;
+  try {
+    total = int(db.prepare(`SELECT COUNT(*) n FROM ${m.table} m WHERE ${w.join(" AND ")}${m.where}`).get() as any);
+  } catch { /* keep rows.length */ }
+  return { rows, total, label: bits.length ? bits.join(" · ") : "all leads" };
 }
 
 // ---------------------------------------------------------------------------
@@ -331,6 +844,10 @@ export function dispositions(ctx: Ctx, round?: string | null): { label: string; 
 export interface SNode {
   id: string; label: string; n: number;
   tone: "good" | "bad" | "warn" | "info" | "neutral";
+  // drill = query string for /drill. Only set where the box maps EXACTLY onto a
+  // map filter; left undefined (not clickable) where it cannot be expressed,
+  // rather than linking to a list that would not match the number.
+  drill?: string;
   children?: SNode[];
 }
 
@@ -341,8 +858,17 @@ export function sankeyTree(ctx: Ctx, round?: string | null): SNode {
   const inRound = (t: string, cond = "1=1") =>
     ids(`SELECT DISTINCT x.lead_id lead_id FROM ${t} x JOIN leads l ON l.lead_id=x.lead_id WHERE l.nsat_round IN (${inc}) AND ${cond}`);
 
-  const all = ids(`SELECT lead_id FROM leads WHERE nsat_round IN (${inc})`);
-  const reg = inRound("registrations");
+  // CSAT lead/registration must come from the same lead_map reconciliation the
+  // KPIs and funnel use, or the Sankey disagrees with the cards above it.
+  // Safe for CSAT: it has no downstream stage rows, so the id-space differs
+  // only where every later set is empty anyway.
+  const useCsatMap = ctx === "CSAT" && csatMapHasRows();
+  const all = useCsatMap
+    ? ids(`SELECT lead_id FROM csat_map WHERE round_tag IN (${inc})`)
+    : ids(`SELECT lead_id FROM leads WHERE nsat_round IN (${inc})`);
+  const reg = useCsatMap
+    ? ids(`SELECT lead_id FROM csat_map WHERE round_tag IN (${inc}) AND registered='paid'`)
+    : inRound("registrations");
   const appeared = inRound("test_results", "x.appeared=1");
   const pass = inRound("test_results", "x.result='pass'");
   const fail = inRound("test_results", "x.result='fail'");
@@ -355,24 +881,33 @@ export function sankeyTree(ctx: Ctx, round?: string | null): SNode {
   const olExpiring = inRound("offer_letters", "x.issued_at <= date('now','-3 day') AND x.issued_at > date('now','-5 day')");
   const olExpired = inRound("offer_letters", "x.issued_at <= date('now','-5 day')");
   const seatAll = inRound("payments", "x.paid_at >= '2026-07-16'");
-  const attempted = inRound("call_logs", "x.channel='human_call'");
-  const connected = inRound("call_logs", "x.channel='human_call' AND x.answered=1");
+  // CSAT calling lives as aggregates on the map (total_calls / connected_calls),
+  // not as call_logs rows, so the comms split must read the map for CSAT too.
+  const attempted = useCsatMap
+    ? ids(`SELECT lead_id FROM csat_map WHERE round_tag IN (${inc}) AND coalesce(total_calls,0) > 0`)
+    : inRound("call_logs", "x.channel='human_call'");
+  const connected = useCsatMap
+    ? ids(`SELECT lead_id FROM csat_map WHERE round_tag IN (${inc}) AND coalesce(connected_calls,0) > 0`)
+    : inRound("call_logs", "x.channel='human_call' AND x.answered=1");
 
   const inter = (a: Set<string>, b: Set<string>) => new Set([...a].filter((x) => b.has(x)));
   const diff = (a: Set<string>, b: Set<string>) => new Set([...a].filter((x) => !b.has(x)));
 
-  const comms = (set: Set<string>, id: string): SNode[] => {
+  // drillBase: when the comms split IS the map's calling data (CSAT), each child
+  // maps onto a map filter, so the boxes can link to the matching student list.
+  const comms = (set: Set<string>, id: string, drillBase?: string): SNode[] => {
     const comm = inter(set, attempted);
     const conn = inter(comm, connected);
+    const d = (suffix: string) => (useCsatMap && drillBase ? `${drillBase}&${suffix}` : undefined);
     return [
       {
-        id: `${id}:comm`, label: "Communicated (human)", n: comm.size, tone: "info",
+        id: `${id}:comm`, label: "Communicated (human)", n: comm.size, tone: "info", drill: d("act=called"),
         children: [
-          { id: `${id}:conn`, label: "Connected", n: conn.size, tone: "good" },
-          { id: `${id}:nopick`, label: "Not connected", n: comm.size - conn.size, tone: "warn" },
+          { id: `${id}:conn`, label: "Connected", n: conn.size, tone: "good", drill: d("conn=1") },
+          { id: `${id}:nopick`, label: "Not connected", n: comm.size - conn.size, tone: "warn", drill: d("act=noconn") },
         ],
       },
-      { id: `${id}:nocomm`, label: "Not communicated", n: set.size - comm.size, tone: "bad" },
+      { id: `${id}:nocomm`, label: "Not communicated", n: set.size - comm.size, tone: "bad", drill: d("act=never") },
     ];
   };
 
@@ -386,8 +921,8 @@ export function sankeyTree(ctx: Ctx, round?: string | null): SNode {
   const sOl = inter(sHeld.size ? inter(sPass, cohort) : cohort, olAll);
   const sSeat = inter(sOl.size ? sOl : cohort, seatAll);
 
-  const node = (id: string, label: string, n: number, tone: SNode["tone"], children?: SNode[]): SNode =>
-    ({ id, label, n, tone, ...(children && children.length ? { children } : {}) });
+  const node = (id: string, label: string, n: number, tone: SNode["tone"], children?: SNode[], drill?: string): SNode =>
+    ({ id, label, n, tone, ...(drill ? { drill } : {}), ...(children && children.length ? { children } : {}) });
 
   const seatNode = node("seat", "Seat booked", sSeat.size, "good");
   // Counselled splits by the offer's life: booked, live (day 0-2), expiring
@@ -417,10 +952,10 @@ export function sankeyTree(ctx: Ctx, round?: string | null): SNode {
   ]);
   const regNode = node("reg", "Registered", sReg.size, "good", [
     testNode,
-    node("reg_no_test", "Did not give test", sReg.size - sApp.size, "bad", comms(diff(sReg, appeared), "reg_no_test")),
-  ]);
+    node("reg_no_test", "Did not give test", sReg.size - sApp.size, "bad", comms(diff(sReg, appeared), "reg_no_test", "reg=paid")),
+  ], useCsatMap ? "reg=paid" : undefined);
   return node("lead", "Leads", all.size, "neutral", [
     regNode,
-    node("no_reg", "Not registered", all.size - sReg.size, "bad", comms(diff(all, reg), "no_reg")),
-  ]);
+    node("no_reg", "Not registered", all.size - sReg.size, "bad", comms(diff(all, reg), "no_reg", "reg=unpaid"), useCsatMap ? "reg=unpaid" : undefined),
+  ], useCsatMap ? "stage=lead" : undefined);
 }

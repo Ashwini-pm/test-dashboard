@@ -3,8 +3,9 @@
 import { useMemo, useState } from "react";
 import type { SNode } from "@/lib/v2";
 
-// Click-to-expand funnel sankey. A node with children shows a chevron; click
-// toggles its split. Ribbon width ∝ students. Numbers only (no drill to lists).
+// Click-to-expand funnel sankey. Clicking the BOX toggles its split; clicking the
+// NUMBER opens the matching student list (only where the box maps exactly onto a
+// map filter — see SNode.drill). Ribbon width ∝ students.
 
 const TONE: Record<string, string> = {
   good: "#1f8a5b", bad: "#c0392b", warn: "#a07c00", info: "#2c5f8a", neutral: "#101828",
@@ -16,7 +17,7 @@ const PAD = 10;
 
 interface Placed { node: SNode; depth: number; y: number; h: number; parent?: Placed; }
 
-export default function Sankey({ root }: { root: SNode }) {
+export default function Sankey({ root, qs }: { root: SNode; qs?: string }) {
   const [open, setOpen] = useState<Set<string>>(new Set([root.id]));
 
   const placed = useMemo(() => {
@@ -90,14 +91,24 @@ export default function Sankey({ root }: { root: SNode }) {
               <text x={x + 14} y={p.y + Math.min(20, p.h / 2 - 2)} fontSize={11.5} fontWeight={600} fill="#5a6572">
                 {p.node.label}{expandable ? (isOpen ? "  ▾" : "  ▸") : ""}
               </text>
-              <text x={x + 14} y={p.y + Math.min(20, p.h / 2 - 2) + 17} fontSize={15} fontWeight={800} fill="#101828">
-                {p.node.n.toLocaleString("en-IN")}
-              </text>
+              {p.node.drill && qs ? (
+                <a href={`/drill?${qs}&${p.node.drill}`} onClick={(e) => e.stopPropagation()}>
+                  <title>open the {p.node.n.toLocaleString("en-IN")} students</title>
+                  <text x={x + 14} y={p.y + Math.min(20, p.h / 2 - 2) + 17} fontSize={15} fontWeight={800}
+                    fill="#101828" className="sk-num-link" textDecoration="underline">
+                    {p.node.n.toLocaleString("en-IN")}
+                  </text>
+                </a>
+              ) : (
+                <text x={x + 14} y={p.y + Math.min(20, p.h / 2 - 2) + 17} fontSize={15} fontWeight={800} fill="#101828">
+                  {p.node.n.toLocaleString("en-IN")}
+                </text>
+              )}
             </g>
           );
         })}
       </svg>
-      <div className="cap" style={{ marginTop: 6 }}>click a box to split it further · red = dropped, blue = communicated (human)</div>
+      <div className="cap" style={{ marginTop: 6 }}>click a box to split it further · click the number to open that student list</div>
     </div>
   );
 }

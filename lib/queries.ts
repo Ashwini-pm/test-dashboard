@@ -36,6 +36,17 @@ function inClause(round: Round): string {
     .join(",");
 }
 
+// CSAT source filter: utm_source lands in leads.source ("Influencers" / "organic" / null).
+export type Src = "organic" | "influencer" | null;
+export function parseSrc(v: string | undefined | null): Src {
+  return v === "organic" || v === "influencer" ? v : null;
+}
+function srcClause(src?: Src): string {
+  if (src === "influencer") return " AND lower(coalesce(l.source,'')) LIKE 'influencer%'";
+  if (src === "organic") return " AND lower(coalesce(l.source,'')) NOT LIKE 'influencer%'";
+  return "";
+}
+
 // Accepts a raw number OR a better-sqlite3 row object ({ n: 5814 } etc) and
 // returns the numeric scalar. get() returns a row object, so unwrap it here.
 const int = (v: unknown): number => {
@@ -306,15 +317,43 @@ export type StageKpi = {
 
 // The 5 funnel-stage KPIs, achieved vs target (target from stage_targets, may be null).
 // Test = who actually took the exam (has a result); pass/fail shown as sub-numbers.
-export function stageKpis(round: Round): StageKpi[] {
+// NSAT-3 / CSAT "better data" overrides: our reconciliation mappings live in
+// in-memory nsat3_map (NSAT-3) and csat_map (CSAT = the lead_map reconciliation).
+function nsat3MapReady(): boolean {
+  try {
+    if (!int(db.prepare("SELECT COUNT(*) n FROM sqlite_master WHERE type='table' AND name='nsat3_map'").get() as any)) return false;
+    return int(db.prepare("SELECT COUNT(*) n FROM nsat3_map").get() as any) > 0;
+  } catch { return false; }
+}
+function csatMapReady(): boolean {
+  try {
+    if (!int(db.prepare("SELECT COUNT(*) n FROM sqlite_master WHERE type='table' AND name='csat_map'").get() as any)) return false;
+    return int(db.prepare("SELECT COUNT(*) n FROM csat_map").get() as any) > 0;
+  } catch { return false; }
+}
+const CSAT_ROUND_SET = new Set<Round>(["CSAT", "CSAT-BBA", "CSAT-BCA", "CSAT-COMB"]);
+// round is a fixed enum value (never user free-text) so interpolation is safe.
+const csatMapWhere = (round: Round, paidOnly: boolean): string => {
+  const parts: string[] = [];
+  if (round !== "CSAT") parts.push(`round_tag='${round}'`);
+  if (paidOnly) parts.push(`registered='paid'`);
+  return parts.length ? " WHERE " + parts.join(" AND ") : "";
+};
+
+export function stageKpis(round: Round, src?: Src): StageKpi[] {
   const inc = inClause(round);
+  const S = srcClause(src);
   const c = (sql: string) => int(db.prepare(sql).get() as any);
   const jl = (extra: string) =>
-    `JOIN leads l ON l.lead_id=x.lead_id WHERE l.nsat_round IN (${inc})${extra}`;
+    `JOIN leads l ON l.lead_id=x.lead_id WHERE l.nsat_round IN (${inc})${S}${extra}`;
   const passed = c(`SELECT COUNT(*) n FROM test_results x ${jl(" AND x.result='pass'")}`);
   const failed = c(`SELECT COUNT(*) n FROM test_results x ${jl(" AND x.result='fail'")}`);
   const achieved: Record<string, number> = {
-    registration: c(`SELECT COUNT(*) n FROM registrations WHERE nsat_round IN (${inc})`),
+    registration: (round === "NSAT-3" && !src && nsat3MapReady())
+      ? c(`SELECT COUNT(*) n FROM nsat3_map WHERE reg_status='paid'`)
+      : (CSAT_ROUND_SET.has(round) && !src && csatMapReady())
+      ? c(`SELECT COUNT(*) n FROM csat_map${csatMapWhere(round, true)}`)
+      : c(`SELECT COUNT(DISTINCT x.lead_id) n FROM registrations x ${jl("")}`),
     test: c(`SELECT COUNT(*) n FROM test_results x ${jl(" AND x.appeared=1")}`),
     // Same definitions as the funnel: counselling = sessions held; offers =
     // NSAT-flow only (passed + post-test); seats = NSAT-flow only (the 45
@@ -448,10 +487,10 @@ export function alerts(round: Round): AlertCard[] {
   );
 }
 
-export function funnel(round: Round): { base: number; rows: FunnelRow[] } {
+export function funnel(round: Round, src?: Src): { base: number; rows: FunnelRow[] } {
   // NSAT-4 and CSAT use the same real-stage funnel layout as NSAT-3; only
   // NSAT-2/Combined keep the legacy canonical-stages view.
-  if (round === "NSAT-3" || round === "NSAT-4" || round.startsWith("CSAT")) return funnelN3(round);
+  if (round === "NSAT-3" || round === "NSAT-4" || round.startsWith("CSAT")) return funnelN3(round, src);
   return funnelN2(round);
 }
 
@@ -544,14 +583,26 @@ function funnelN2(round: Round): { base: number; rows: FunnelRow[] } {
   return { base, rows };
 }
 
-function funnelN3(round: Round = "NSAT-3"): { base: number; rows: FunnelRow[] } {
+function funnelN3(round: Round = "NSAT-3", src?: Src): { base: number; rows: FunnelRow[] } {
   const inc = inClause(round);
+  const S = srcClause(src);
   const c = (sql: string) => int(db.prepare(sql).get() as any);
   const jl = (extra: string) =>
-    `JOIN leads l ON l.lead_id=x.lead_id WHERE l.nsat_round IN (${inc})${extra}`;
-  // Real LOVABLE-sourced funnel
-  const leads = c(`SELECT COUNT(*) n FROM leads WHERE nsat_round IN (${inc})`);
-  const reg = c(`SELECT COUNT(*) n FROM registrations WHERE nsat_round IN (${inc})`);
+    `JOIN leads l ON l.lead_id=x.lead_id WHERE l.nsat_round IN (${inc})${S}${extra}`;
+  // Real LOVABLE-sourced funnel. NSAT-3 Lead + Registration come from our
+  // reconciliation mapping (nsat3_map) when present; all other stages unchanged.
+  const useNsat3 = round === "NSAT-3" && !src && nsat3MapReady();
+  const useCsat = CSAT_ROUND_SET.has(round) && !src && csatMapReady();
+  const leads = useNsat3
+    ? c(`SELECT COUNT(*) n FROM nsat3_map`)
+    : useCsat
+    ? c(`SELECT COUNT(*) n FROM csat_map${csatMapWhere(round, false)}`)
+    : c(`SELECT COUNT(*) n FROM leads l WHERE l.nsat_round IN (${inc})${S}`);
+  const reg = useNsat3
+    ? c(`SELECT COUNT(*) n FROM nsat3_map WHERE reg_status='paid'`)
+    : useCsat
+    ? c(`SELECT COUNT(*) n FROM csat_map${csatMapWhere(round, true)}`)
+    : c(`SELECT COUNT(DISTINCT x.lead_id) n FROM registrations x ${jl("")}`);
   const appeared = c(`SELECT COUNT(*) n FROM test_results x ${jl(" AND x.appeared=1")}`);
   const passed = c(`SELECT COUNT(*) n FROM test_results x ${jl(" AND x.result='pass'")}`);
   const failed = c(`SELECT COUNT(*) n FROM test_results x ${jl(" AND x.result='fail'")}`);
@@ -1109,6 +1160,10 @@ function commsCols(stage: string): { key: string; label: string; sql: string }[]
       sql: `CASE WHEN ${HUMAN_CONNECTED} THEN 'Connected' WHEN ${HUMAN_TOUCHED} THEN 'Called, no pickup' ELSE '' END`,
     },
     {
+      key: "called_by", label: "Called by",
+      sql: "(SELECT c.rep_id FROM call_logs c WHERE c.lead_id=l.lead_id AND c.channel='human_call' AND c.rep_id IS NOT NULL ORDER BY c.attempted_at DESC LIMIT 1)",
+    },
+    {
       key: "last_call", label: "Last Call",
       sql: "(SELECT substr(MAX(attempted_at),1,10) FROM call_logs c3 WHERE c3.channel='human_call' AND c3.lead_id=l.lead_id)",
     },
@@ -1142,10 +1197,11 @@ function waStatus(stage: string): string {
   );
 }
 
-export function stageList(stage: string, round: Round): StageList | null {
+export function stageList(stage: string, round: Round, src?: Src): StageList | null {
   const def = STAGE_LIST_DEFS[stage];
   if (!def) return null;
   const inc = inClause(round);
+  const S = srcClause(src);
   // Comms (AI/human/WhatsApp) ran only for NSAT-3 — hide those columns elsewhere.
   const hasComms = roundList(round).includes("NSAT-3");
   const allExtras = [...def.extras, ...(hasComms ? commsCols(stage) : [])];
@@ -1154,7 +1210,7 @@ export function stageList(stage: string, round: Round): StageList | null {
     .prepare(
       `SELECT l.lead_id, l.full_name AS name, l.email, l.phone, l.city, l.nsat_round AS round${extraSel ? ", " + extraSel : ""}
        FROM leads l
-       WHERE l.nsat_round IN (${inc}) AND ${def.where}
+       WHERE l.nsat_round IN (${inc})${S} AND ${def.where}
        ORDER BY l.full_name`
     )
     .all() as Record<string, string | null>[];
@@ -1491,15 +1547,16 @@ const STAGE_BREAKDOWN: { stage: string; label: string; tiles: TileRule[] }[] = [
   },
 ];
 
-export function stageBreakdown(round: Round): StageBreakdown[] {
+export function stageBreakdown(round: Round, src?: Src): StageBreakdown[] {
   const inc = inClause(round);
+  const S = srcClause(src);
   return STAGE_BREAKDOWN.map((g) => ({
     stage: g.stage,
     label: g.label,
     tiles: g.tiles.map((t) => {
       let count: number | null = null;
       if (t.where) {
-        count = int(db.prepare(`SELECT COUNT(*) n FROM leads l WHERE l.nsat_round IN (${inc}) AND ${t.where}`).get() as any);
+        count = int(db.prepare(`SELECT COUNT(*) n FROM leads l WHERE l.nsat_round IN (${inc})${S} AND ${t.where}`).get() as any);
       }
       return { key: t.key, label: t.label, count, tone: t.tone };
     }),

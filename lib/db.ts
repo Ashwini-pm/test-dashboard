@@ -158,7 +158,51 @@ async function refresh(): Promise<void> {
     console.warn("[db] student_slots pull failed:", e?.message);
   }
   deriveStages();
+  enrichNsat3MapCalls();
   global.__nsatLoadedAt = Date.now();
+}
+
+// NSAT-3's calling data lives in call_logs (human_call), not in nsat3_lead_map,
+// so fill the map's call aggregates from it. This gives NSAT-3 the same coverage
+// views CSAT gets, keyed the way the map is keyed (CRM lead id == leads.student_id).
+// Map rows with no matching NSAT-3 lead keep NULL (unknown), never a false zero.
+function enrichNsat3MapCalls(): void {
+  try {
+    if (!db.prepare("SELECT COUNT(*) n FROM sqlite_master WHERE type='table' AND name='nsat3_map'").get()) return;
+    db.exec(`
+      DROP TABLE IF EXISTS n3_agg;
+      CREATE TABLE n3_agg AS
+      SELECT COALESCE(NULLIF(TRIM(l.student_id),''), l.lead_id) AS k,
+             SUM(CASE WHEN c.channel='human_call' THEN 1 ELSE 0 END) AS calls,
+             SUM(CASE WHEN c.channel='human_call' AND c.answered=1 THEN 1 ELSE 0 END) AS conns,
+             MIN(CASE WHEN c.channel='human_call' THEN c.attempted_at END) AS first_at,
+             MAX(CASE WHEN c.channel='human_call' THEN c.attempted_at END) AS last_at
+        FROM leads l JOIN call_logs c ON c.lead_id = l.lead_id
+       WHERE l.nsat_round = 'NSAT-3'
+       GROUP BY 1;
+      CREATE INDEX IF NOT EXISTS ix_n3agg ON n3_agg(k);
+
+      DROP TABLE IF EXISTS n3_rep;
+      CREATE TABLE n3_rep AS
+      SELECT COALESCE(NULLIF(TRIM(l.student_id),''), l.lead_id) AS k,
+             MAX(NULLIF(TRIM(l.assigned_rep_id),'')) AS rep
+        FROM leads l WHERE l.nsat_round = 'NSAT-3' GROUP BY 1;
+      CREATE INDEX IF NOT EXISTS ix_n3rep ON n3_rep(k);
+
+      UPDATE nsat3_map SET
+        total_calls     = (SELECT a.calls    FROM n3_agg a WHERE a.k = nsat3_map.lead_id),
+        connected_calls = (SELECT a.conns    FROM n3_agg a WHERE a.k = nsat3_map.lead_id),
+        first_call_at   = (SELECT a.first_at FROM n3_agg a WHERE a.k = nsat3_map.lead_id),
+        last_call_at    = (SELECT a.last_at  FROM n3_agg a WHERE a.k = nsat3_map.lead_id)
+      WHERE EXISTS (SELECT 1 FROM n3_agg a WHERE a.k = nsat3_map.lead_id);
+
+      UPDATE nsat3_map SET
+        counsellor = (SELECT r.rep FROM n3_rep r WHERE r.k = nsat3_map.lead_id)
+      WHERE EXISTS (SELECT 1 FROM n3_rep r WHERE r.k = nsat3_map.lead_id);
+    `);
+  } catch (e: any) {
+    console.warn("[db] nsat3_map call enrichment failed:", e?.message);
+  }
 }
 
 // Map raw slot-form submissions onto leads so "form filled but not booked yet"
@@ -296,7 +340,7 @@ async function fetchCsatProject(): Promise<CsatPull | null> {
     return rows;
   };
   return Promise.all(
-    ["nsat4", "bba", "bca", "combined"].map(async (t) => ({ table: t, rows: await pull(t) }))
+    ["nsat4", "bba", "bca", "combined", "nsat3_lead_map", "lead_map", "nsat4_lead_map"].map(async (t) => ({ table: t, rows: await pull(t) }))
   );
 }
 
@@ -309,23 +353,66 @@ function overlayNsat4Csat(pulls: CsatPull): void {
     return d.length >= 10 ? d.slice(-10) : "";
   };
   const insLead = db.prepare(
-    "INSERT OR IGNORE INTO leads(lead_id,student_id,full_name,phone,phone10,email,city,region,nsat_round,source,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)"
+    "INSERT OR IGNORE INTO leads(lead_id,student_id,full_name,phone,phone10,email,city,region,nsat_round,source) VALUES (?,?,?,?,?,?,?,?,?,?)"
   );
   const insReg = db.prepare("INSERT INTO registrations(lead_id,nsat_round,registered_at) VALUES (?,?,?)");
+  // NSAT-3 "better data" mapping (our reconciliation) lives in its own table so it
+  // can override only the NSAT-3 Lead + Registration counts, leaving every other
+  // stage (test/pass/counselling/OL/seat) on the existing funnel-sheet pipeline.
+  // DROP+CREATE (not IF NOT EXISTS): a long-lived dev process keeps the old
+  // in-memory schema otherwise, and inserts fail once columns are added.
+  db.exec("DROP TABLE IF EXISTS nsat3_map");
+  db.exec("CREATE TABLE nsat3_map (lead_id TEXT, reg_status TEXT, campaign_source TEXT, origin TEXT, crm_source_category TEXT, total_calls INTEGER, connected_calls INTEGER, first_signup TEXT, first_call_at TEXT, last_call_at TEXT, counsellor TEXT, name TEXT, phone TEXT, utm_campaign TEXT)");
+  const insMap = db.prepare("INSERT INTO nsat3_map(lead_id,reg_status,campaign_source,origin,crm_source_category,total_calls,connected_calls,first_signup,first_call_at,last_call_at,counsellor,name,phone,utm_campaign) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)");
+  // CSAT "better data" = the lead_map reconciliation (deduped bba/bca/combined +
+  // crm_only attribution). Drives only CSAT Lead + Registration counts.
+  db.exec("DROP TABLE IF EXISTS nsat4_map");
+  db.exec("CREATE TABLE nsat4_map (lead_id TEXT, registered TEXT, campaign_source TEXT, origin TEXT, crm_source_category TEXT, total_calls INTEGER, connected_calls INTEGER, first_signup TEXT, first_call_at TEXT, last_call_at TEXT, counsellor TEXT, name TEXT, phone TEXT, utm_campaign TEXT, offer_letter TEXT, seat_booked TEXT)");
+  const insN4 = db.prepare("INSERT INTO nsat4_map(lead_id,registered,campaign_source,origin,crm_source_category,total_calls,connected_calls,first_signup,first_call_at,last_call_at,counsellor,name,phone,utm_campaign,offer_letter,seat_booked) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)");
+  db.exec("DROP TABLE IF EXISTS csat_map");
+  db.exec("CREATE TABLE csat_map (lead_id TEXT, round_tag TEXT, registered TEXT, campaign_source TEXT, origin TEXT, crm_source_category TEXT, total_calls INTEGER, connected_calls INTEGER, first_signup TEXT, first_call_at TEXT, last_call_at TEXT, counsellor TEXT, name TEXT, phone TEXT, utm_campaign TEXT)");
+  const insCsat = db.prepare("INSERT INTO csat_map(lead_id,round_tag,registered,campaign_source,origin,crm_source_category,total_calls,connected_calls,first_signup,first_call_at,last_call_at,counsellor,name,phone,utm_campaign) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)");
   const tx = db.transaction(() => {
     db.prepare("DELETE FROM registrations WHERE nsat_round IN ('NSAT-4','CSAT','CSAT-BBA','CSAT-BCA','CSAT-COMB')").run();
     db.prepare("DELETE FROM leads WHERE nsat_round IN ('NSAT-4','CSAT','CSAT-BBA','CSAT-BCA','CSAT-COMB')").run();
+    db.prepare("DELETE FROM nsat3_map").run();
+    db.prepare("DELETE FROM csat_map").run();
     for (const { table, rows } of pulls) {
+      if (table === "nsat3_lead_map") {
+        for (const r of rows) insMap.run(String(r.lead_id ?? ""), r.reg_status ?? null, r.campaign_source ?? null, r.origin ?? null, r.crm_source_category ?? null, r.total_calls ?? null, r.connected_calls ?? null, r.first_signup ?? null, r.first_call_at ?? null, r.last_call_at ?? null, r.counsellor ?? null, r.name ?? null, r.phone ?? null, r.utm_campaign ?? null);
+        continue;
+      }
+      if (table === "nsat4_lead_map") {
+        // map_key is the dedup key; lead_id is the CRM id and may be null (capture_only)
+        for (const r of rows) insN4.run(
+          String(r.lead_id ?? r.map_key ?? ""), r.registered ?? null, r.campaign_source ?? null,
+          r.origin ?? null, r.crm_source_category ?? null, r.total_calls ?? null, r.connected_calls ?? null,
+          r.first_signup ?? null, r.first_call_at ?? null, r.last_call_at ?? null, r.counsellor ?? null,
+          r.name ?? null, r.phone ?? null, r.utm_campaign ?? null, r.offer_letter ?? null, r.seat_booked ?? null);
+        continue;
+      }
+      if (table === "lead_map") {
+        for (const r of rows) {
+          const st = String(r.signup_tables ?? "");
+          const tag = st === "bba" ? "CSAT-BBA" : st === "bca" ? "CSAT-BCA" : "CSAT-COMB";
+          insCsat.run(String(r.lead_id ?? ""), tag, r.registered ?? null, r.campaign_source ?? null, r.origin ?? null, r.crm_source_category ?? null, r.total_calls ?? null, r.connected_calls ?? null, r.first_signup ?? null, r.first_call_at ?? null, r.last_call_at ?? null, r.counsellor ?? null, r.name ?? null, r.phone ?? null, r.utm_campaign ?? null);
+        }
+        continue;
+      }
       const round =
         table === "nsat4" ? "NSAT-4" :
         table === "bba" ? "CSAT-BBA" :
         table === "bca" ? "CSAT-BCA" : "CSAT-COMB";
       for (const r of rows) {
-        const lid = table === "nsat4" ? `NSAT-4-${r.id}` : `CSAT-${table}-${r.id}`;
+        // CSAT: key the lead by person (sunstone_user_id → phone10 → id) so the
+        // duplicate 422-rows (same student, form re-submitted) collapse to one
+        // lead via INSERT OR IGNORE, giving the proper deduped lead count.
+        const personKey =
+          String(r.sunstone_user_id ?? "").trim() || p10(String(r.phone ?? "")) || String(r.id ?? "");
+        const lid = table === "nsat4" ? `NSAT-4-${r.id}` : `CSAT-${table}-${personKey}`;
         insLead.run(
           lid, String(r.id ?? ""), r.full_name ?? null, r.phone ?? null, p10(String(r.phone ?? "")),
-          r.email ?? null, r.user_city ?? null, r.program ?? null, round, r.lead_source ?? null,
-          r.created_at ?? null
+          r.email ?? null, r.user_city ?? null, r.program ?? null, round, r.utm_source ?? r.lead_source ?? null
         );
         if (String(r.payment_status ?? "").toLowerCase() === "paid") {
           insReg.run(lid, round, r.paid_at ?? r.created_at ?? null);
