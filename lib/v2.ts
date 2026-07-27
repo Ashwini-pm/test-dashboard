@@ -356,6 +356,34 @@ export function preTestTable(ctx: Ctx, round?: string | null): FunnelCallRow[] {
   rows.push({ key: "lead", label: "Lead (all)", ...callCols(m, ""), drill: "stage=lead" });
   rows.push({ key: "reg", label: "Registered", ...callCols(m, ` AND m.${paid}='paid'`), drill: "reg=paid" });
   rows.push({ key: "unreg", label: "Not registered", ...callCols(m, ` AND m.${paid}<>'paid'`), drill: "reg=unpaid" });
+
+  // The Combined page offers BBA and BCA together, so the signup carries no
+  // program. Bifurcate it by the program the CRM assigned instead.
+  if (m.table === "csat_map" && (round === "Combined" || round === "All")) {
+    let progs: string[] = [];
+    try {
+      progs = (db.prepare(
+        `SELECT coalesce(nullif(m.signup_programs,''),'__none__') p, COUNT(*) n
+           FROM csat_map m WHERE 1=1${m.where} GROUP BY 1 ORDER BY n DESC`
+      ).all() as any[]).map((r) => String(r.p));
+    } catch { progs = []; }
+    // BBA/BCA first (the two the page sells), then anything else the CRM assigned.
+    const ordered = ["BBA", "BCA", ...progs.filter((x) => x !== "BBA" && x !== "BCA")];
+    for (const pg of ordered) {
+      if (!progs.includes(pg)) continue;
+      const scope = pg === "__none__"
+        ? " AND nullif(m.signup_programs,'') IS NULL"
+        : ` AND m.signup_programs = '${esc(pg)}'`;
+      const cols = callCols(m, scope);
+      if (!cols.total) continue;
+      rows.push({
+        key: `cprog_${pg}`,
+        label: `· ${pg === "__none__" ? "no signup (CRM-only lead)" : pg}`,
+        ...cols,
+        drill: `sprog=${encodeURIComponent(pg)}`,
+      });
+    }
+  }
   return rows;
 }
 export function postTestTable(ctx: Ctx, round?: string | null): FunnelCallRow[] {
@@ -433,6 +461,8 @@ export interface DrillParams {
   phone?: string | null;   // phone contains
   conn?: string | null;    // "1" connected, "0" not connected
   pstage?: string | null;  // post-test stage: test|pass|slot|couns|ol|seat
+  cprog?: string | null;   // CRM-assigned program (BBA/BCA/...); "__none__" = CRM has none
+  sprog?: string | null;   // program the student picked on the page; "__none__" = never signed up
   couns?: string[] | null; // counsellor names, or "__none__" for unassigned — multi-select
 }
 
@@ -516,6 +546,16 @@ export function drill(ctx: Ctx, round: string | null | undefined, p: DrillParams
     }
   }
   if (p.nocouns === "1") { w.push("nullif(m.counsellor,'') IS NULL"); bits.push("no counsellor"); }
+  // Program as the CRM assigned it, not what the student picked on the form.
+  if (p.cprog) {
+    if (p.cprog === "__none__") { w.push("nullif(m.crm_program,'') IS NULL"); bits.push("no CRM program"); }
+    else { w.push(`m.crm_program = '${esc(p.cprog)}'`); bits.push(`CRM ${p.cprog}`); }
+  }
+  // program as chosen on the landing page (the Combined page asks for it)
+  if (p.sprog) {
+    if (p.sprog === "__none__") { w.push("nullif(m.signup_programs,'') IS NULL"); bits.push("no signup"); }
+    else { w.push(`m.signup_programs = '${esc(p.sprog)}'`); bits.push(p.sprog); }
+  }
   // post-test stages live in the stage tables, not the map: match via leads.
   if (p.pstage && m.table === "nsat4_map") {
     if (p.pstage === "ol")   { w.push("nullif(m.offer_letter,'') IS NOT NULL"); bits.push("offer letter"); }

@@ -645,7 +645,36 @@ function funnelN3(round: Round = "NSAT-3", src?: Src): { base: number; rows: Fun
     }
   };
   main("lead", "Lead", leads, "no lead-source feed");
+  // Combined sells BBA and BCA together, so the round itself has no program.
+  // The Combined page DOES capture the student's choice, so split on that
+  // (signup_programs). Leads with no signup are crm_only attribution rows.
+  const progSplit = (parentKey: string, extraWhere: string): void => {
+    if (!(round === "CSAT-COMB" && csatMapReady())) return;
+    let rows2: { p: string; n: number }[] = [];
+    try {
+      rows2 = db.prepare(
+        `SELECT coalesce(nullif(signup_programs,''),'no signup (CRM-only lead)') p, COUNT(*) n
+           FROM csat_map WHERE round_tag = 'CSAT-COMB'${extraWhere}
+          GROUP BY 1 ORDER BY n DESC`
+      ).all() as { p: string; n: number }[];
+    } catch { return; }
+    if (rows2.length < 2) return;
+    rows[rows.length - 1].expandable = true; // the row we just pushed
+    for (const r of rows2) {
+      if (!r.n) continue;
+      rows.push({
+        key: `${parentKey}_prog_${r.p}`,
+        label: r.p,
+        count: r.n,
+        pct: pb(r.n),
+        drop: null,
+        detail: true,
+      });
+    }
+  };
+  progSplit("lead", "");
   main("registration", "Registration", reg, "no registration feed");
+  progSplit("registration", " AND registered='paid'");
   main("test", "Test", appeared, "awaiting exam feed");
   // Detail nested under Test (revealed by the chevron): AI calling, attending, result.
   const waveCount = int(

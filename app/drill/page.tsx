@@ -32,7 +32,7 @@ export default async function Drill({ searchParams }: { searchParams: Promise<Re
   const p: DrillParams = {
     src: many(sp.src), camp: many(sp.camp), origin: many(sp.origin), couns: many(sp.couns),
     stage: one(sp.stage), act: one(sp.act), reg: one(sp.reg), age: one(sp.age), speed: one(sp.speed),
-    conn: one(sp.conn), nocouns: one(sp.nocouns), q: one(sp.q), pstage: one(sp.pstage),
+    conn: one(sp.conn), nocouns: one(sp.nocouns), q: one(sp.q), pstage: one(sp.pstage), cprog: one(sp.cprog), sprog: one(sp.sprog),
     id: one(sp.id), name: one(sp.name), phone: one(sp.phone),
   };
   const { rows, total, label } = drill(ctx, round, p);
@@ -83,6 +83,8 @@ export default async function Drill({ searchParams }: { searchParams: Promise<Re
             <input type="hidden" name="round" value={round} />
             {p.stage && <input type="hidden" name="stage" value={p.stage} />}
             {p.pstage && <input type="hidden" name="pstage" value={p.pstage} />}
+            {p.cprog && <input type="hidden" name="cprog" value={p.cprog} />}
+            {p.sprog && <input type="hidden" name="sprog" value={p.sprog} />}
 
             <div className="dh-bar">
               <button type="submit" className="df-btn">Apply filters</button>
