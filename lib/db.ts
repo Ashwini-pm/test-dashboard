@@ -23,6 +23,8 @@ declare global {
   var __nsatLoadedAt: number | undefined;
   // eslint-disable-next-line no-var
   var __nsatInflight: Promise<void> | undefined;
+  // eslint-disable-next-line no-var
+  var __nsatLoadError: string | undefined;
 }
 
 const TTL_MS = Number(process.env.NSAT_LIVE_TTL_MS || 60_000); // 1 min default
@@ -131,8 +133,11 @@ async function refresh(): Promise<void> {
   const T0 = Date.now();
   db.pragma("foreign_keys = OFF"); // robust even if a cached (dev global) db had it on
   if (!supabaseConfigured) {
-    console.warn("[db] Supabase not configured - serving empty in-memory DB");
-    global.__nsatLoadedAt = Date.now();
+    // Do NOT stamp __nsatLoadedAt here. Doing so marked an EMPTY database as
+    // fresh for the whole TTL, so every later request (and every Sync) short-
+    // circuited and returned zeros without attempting a pull.
+    global.__nsatLoadError = "Supabase is not configured: SUPABASE_URL and/or SUPABASE_SERVICE_ROLE_KEY are missing in this environment.";
+    console.error("[db] " + global.__nsatLoadError);
     return;
   }
   const pulled = await Promise.all([
@@ -175,6 +180,7 @@ async function refresh(): Promise<void> {
   enrichNsat3MapCalls();
   buildMapIndexes();
   console.log(`[db] hydrate ${Date.now() - T0}ms`);
+  global.__nsatLoadError = undefined;
   global.__nsatLoadedAt = Date.now();
 }
 
@@ -550,13 +556,20 @@ function deriveStages(): void {
 // Call before any query. Pulls fresh data from Supabase when the TTL has
 // lapsed; concurrent callers share one in-flight refresh.
 export async function ensureFresh(force = false): Promise<void> {
+  // record why a hydrate failed so the UI can say something useful
+
   const loadedAt = global.__nsatLoadedAt ?? 0;
   const fresh = loadedAt > 0 && Date.now() - loadedAt < TTL_MS;
   if (fresh && !force) return;
   if (!global.__nsatInflight) {
-    global.__nsatInflight = refresh().finally(() => {
-      global.__nsatInflight = undefined;
-    });
+    global.__nsatInflight = refresh()
+      .catch((e: any) => {
+        global.__nsatLoadError = `Live pull failed: ${e?.message ?? e}`;
+        console.error("[db] " + global.__nsatLoadError);
+      })
+      .finally(() => {
+        global.__nsatInflight = undefined;
+      });
   }
   // Stale-while-revalidate: when we already have data, serve it instantly and
   // let the refresh finish in the background. Only a cold start (no data yet)
@@ -568,6 +581,12 @@ export async function ensureFresh(force = false): Promise<void> {
 // True only when a hydrate actually landed rows. Pages use this to show an
 // honest "not loaded" state instead of rendering a screen full of zeros when a
 // cold-start hydrate times out.
+export function loadState(): { ok: boolean; reason: string | null } {
+  const ok = dataLoaded();
+  if (ok) return { ok: true, reason: null };
+  return { ok: false, reason: global.__nsatLoadError ?? "The live pull failed or timed out on this request." };
+}
+
 export function dataLoaded(): boolean {
   try {
     const r = db.prepare("SELECT COUNT(*) n FROM leads").get() as any;

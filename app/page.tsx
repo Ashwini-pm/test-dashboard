@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { ensureFresh, dataLoaded } from "@/lib/db";
+import { ensureFresh, loadState } from "@/lib/db";
 import {
   parseCtx, stageCounts, roundOptions, defaultRound, ctxRounds, sankeyTree, sourceStages, sourceLegend,
   coverageAvailable, actionCoverage, untouchedAgeing, sourceAction, speedToLead,
@@ -22,7 +22,7 @@ const nf = (n: number) => n.toLocaleString("en-IN");
 export default async function Overview({ searchParams }: { searchParams: Promise<Record<string, string | undefined>> }) {
   const sp = await searchParams;
   await ensureFresh();
-  const loaded = dataLoaded();
+  const load = loadState();
   const ctx = parseCtx(sp.ctx);
   const round = sp.round || defaultRound(ctx);
   const qs = `${ctx === "CSAT" ? "&ctx=CSAT" : ""}${round ? `&round=${round}` : ""}`;
@@ -63,12 +63,13 @@ export default async function Overview({ searchParams }: { searchParams: Promise
       </div>
 
 
-      {!loaded && (
+      {!load.ok && (
         <section className="grid mb">
           <div className="card co-caveat">
             <p className="sb-empty">
-              <b>Data did not load.</b> The live pull failed or timed out on this request, so every number
-              below would read zero. Hit <b>Sync now</b> — this is a load failure, not an empty cohort.
+              <b>Data did not load.</b> {load.reason} Every number below would read zero, so this is a
+              load failure, not an empty cohort. If it mentions missing configuration, Sync will not help:
+              the environment variables have to be set where the app is deployed.
             </p>
           </div>
         </section>
