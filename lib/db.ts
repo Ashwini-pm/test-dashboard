@@ -179,6 +179,33 @@ async function refresh(): Promise<void> {
 // The map tables are built fresh each hydrate, so index them here. Without this
 // the post-test queries do a correlated scan per map row (24 counts x thousands
 // of rows) and every page render paid for it.
+export function mirrorRaw(name: string, rows: Record<string, any>[]): void {
+  try {
+    db.exec(`DROP TABLE IF EXISTS ${name}`);
+    if (!rows.length) { db.exec(`CREATE TABLE ${name} (lead_id TEXT)`); return; }
+    const cols = Object.keys(rows[0]);
+    db.exec(`CREATE TABLE ${name} (${cols.map((c) => `"${c}"`).join(", ")})`);
+    const ins = db.prepare(
+      `INSERT INTO ${name} (${cols.map((c) => `"${c}"`).join(",")}) VALUES (${cols.map(() => "?").join(",")})`
+    );
+    const tx = db.transaction((data: Record<string, any>[]) => {
+      for (const r of data) {
+        ins.run(cols.map((c) => {
+          const v = r[c];
+          if (v === undefined || v === null) return null;
+          if (typeof v === "boolean") return v ? 1 : 0;
+          if (typeof v === "object") return JSON.stringify(v);
+          return v;
+        }));
+      }
+    });
+    tx(rows);
+    db.exec(`CREATE INDEX IF NOT EXISTS ix_${name}_lead ON ${name}(lead_id)`);
+  } catch (e: any) {
+    console.warn(`[db] mirrorRaw ${name} failed:`, e?.message);
+  }
+}
+
 function buildMapIndexes(): void {
   const run = (sql: string) => { try { db.exec(sql); } catch { /* table may not exist */ } };
   run("CREATE INDEX IF NOT EXISTS ix_n3map_lead ON nsat3_map(lead_id)");
@@ -441,6 +468,7 @@ function overlayNsat4Csat(pulls: CsatPull): void {
         continue;
       }
       if (table === "nsat4_lead_map") {
+        mirrorRaw("cohort_nsat4", rows);
         // map_key is the dedup key; lead_id is the CRM id and may be null (capture_only)
         for (const r of rows) insN4.run(
           String(r.lead_id ?? r.map_key ?? ""), r.registered ?? null, r.campaign_source ?? null,
@@ -450,6 +478,7 @@ function overlayNsat4Csat(pulls: CsatPull): void {
         continue;
       }
       if (table === "lead_map") {
+        mirrorRaw("cohort_csat1", rows);
         for (const r of rows) {
           const st = String(r.signup_tables ?? "");
           const tag = st === "bba" ? "CSAT-BBA" : st === "bca" ? "CSAT-BCA" : "CSAT-COMB";

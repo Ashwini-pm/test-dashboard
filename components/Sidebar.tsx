@@ -12,6 +12,7 @@ const TABS = [
   { href: "/", label: "Overview", icon: IconGrid, match: (p: string) => p === "/" },
   { href: "/students", label: "Students", icon: IconLeads, match: (p: string) => p.startsWith("/students") },
   { href: "/comms", label: "Communication", icon: IconMatrix, match: (p: string) => p.startsWith("/comms") },
+  { href: "/cohort", label: "Cohorts", icon: IconGrid, match: (p: string) => p.startsWith("/cohort") },
 ];
 
 export default function Sidebar() {
