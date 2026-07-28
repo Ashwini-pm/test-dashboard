@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import Link from "next/link";
 import { ensureFresh } from "@/lib/db";
 import { parseCtx, defaultRound, drill, drillFacets, type DrillParams } from "@/lib/v2";
@@ -15,6 +16,8 @@ const many = (v: string | string[] | undefined): string[] | null => {
 };
 const one = (v: string | string[] | undefined): string | null =>
   (Array.isArray(v) ? v[0] : v) ?? null;
+
+const PAGE_SIZE = 250;
 
 const CALLS: [string, string][] = [["", "any"], ["never", "never called"], ["called", "called"], ["noconn", "no answer"]];
 const CONNS: [string, string][] = [["", "any"], ["1", "connected"], ["0", "not connected"]];
@@ -35,9 +38,15 @@ export default async function Drill({ searchParams }: { searchParams: Promise<Re
     conn: one(sp.conn), nocouns: one(sp.nocouns), q: one(sp.q), pstage: one(sp.pstage), cprog: one(sp.cprog), sprog: one(sp.sprog),
     id: one(sp.id), name: one(sp.name), phone: one(sp.phone),
   };
-  const { rows, total, label } = drill(ctx, round, p);
+  const pageNum = Math.max(1, Number(one(sp.page) ?? 1) || 1);
+  const offset = (pageNum - 1) * PAGE_SIZE;
+  const { rows, total, label } = drill(ctx, round, p, PAGE_SIZE, offset);
+  const pages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  const from = total === 0 ? 0 : offset + 1;
+  const to = offset + rows.length;
   // CSV link carries the exact filters in view, so the export always matches
   // what is on screen — and it is NOT capped at 1,000.
+  const pageHref = (n: number) => `/drill?${csvQs}${csvQs ? "&" : ""}page=${n}`;
   const csvQs = (() => {
     const q = new URLSearchParams();
     if (ctx === "CSAT") q.set("ctx", "CSAT");
@@ -90,9 +99,8 @@ export default async function Drill({ searchParams }: { searchParams: Promise<Re
           <header>
             <h3>Matching students</h3>
             <span className="cap">
-              {total > rows.length
-                ? `showing first ${nf(rows.length)} of ${nf(total)} — the table is capped for page weight, the CSV is not`
-                : `${nf(rows.length)} rows`}
+              {`showing ${nf(from)}–${nf(to)} of ${nf(total)}`}
+              {pages > 1 ? ` · page ${nf(pageNum)} of ${nf(pages)}` : ""}
               {" · filter in the header row · ⌘/ctrl-click for multiple"}
             </span>
           </header>
@@ -150,7 +158,7 @@ export default async function Drill({ searchParams }: { searchParams: Promise<Re
                 <tbody>
                   {rows.map((r, i) => (
                     <tr key={r.lead_id}>
-                      <td className="dh-idx">{i + 1}</td>
+                      <td className="dh-idx">{offset + i + 1}</td>
                       <td>{r.lead_id}</td>
                       <td>{r.name || "—"}</td>
                       <td className={r.phone && !/^\d/.test(r.phone) ? "df-enc" : ""}>{r.phone || "—"}</td>
@@ -170,6 +178,28 @@ export default async function Drill({ searchParams }: { searchParams: Promise<Re
                 </tbody>
               </table>
             </div>
+
+            {pages > 1 && (
+              <nav className="dh-pager">
+                <a className={`chip${pageNum <= 1 ? " off" : ""}`} href={pageNum > 1 ? pageHref(pageNum - 1) : undefined}>← prev</a>
+                {(() => {
+                  // first, last, and a window around the current page
+                  const want = new Set<number>([1, pages, pageNum, pageNum - 1, pageNum + 1, pageNum - 2, pageNum + 2]);
+                  const list = [...want].filter((n) => n >= 1 && n <= pages).sort((a, b) => a - b);
+                  const out: ReactNode[] = [];
+                  let prev = 0;
+                  for (const n of list) {
+                    if (prev && n - prev > 1) out.push(<span key={`gap${n}`} className="dh-gap">…</span>);
+                    out.push(
+                      <a key={n} href={pageHref(n)} className={`chip${n === pageNum ? " on" : ""}`}>{nf(n)}</a>
+                    );
+                    prev = n;
+                  }
+                  return out;
+                })()}
+                <a className={`chip${pageNum >= pages ? " off" : ""}`} href={pageNum < pages ? pageHref(pageNum + 1) : undefined}>next →</a>
+              </nav>
+            )}
           </form>
         </div>
       </section>

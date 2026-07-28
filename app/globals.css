@@ -1464,3 +1464,9 @@ table.list tbody tr:hover td {
 .main { max-width: 100%; overflow-x: clip; }
 .dh-csv { text-decoration: none; }
 .dh-csv:hover { border-color: var(--primary-2); color: var(--primary-2); }
+/* drill pagination */
+.dh-pager { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 14px 0 2px; }
+.dh-pager .chip { text-decoration: none; min-width: 34px; text-align: center; }
+.dh-pager .chip.on { background: var(--primary); color: #fff; border-color: var(--primary); }
+.dh-pager .chip.off { opacity: .4; pointer-events: none; }
+.dh-gap { color: var(--text-faint); padding: 0 2px; }
