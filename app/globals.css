@@ -1462,3 +1462,5 @@ table.list tbody tr:hover td {
 /* the app shell itself must never be wider than the viewport */
 .app { max-width: 100vw; overflow-x: clip; }
 .main { max-width: 100%; overflow-x: clip; }
+.dh-csv { text-decoration: none; }
+.dh-csv:hover { border-color: var(--primary-2); color: var(--primary-2); }

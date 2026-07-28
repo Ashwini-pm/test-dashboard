@@ -501,7 +501,7 @@ export interface DrillRow {
 }
 const esc = (s: string) => s.replace(/'/g, "''");
 
-export function drill(ctx: Ctx, round: string | null | undefined, p: DrillParams):
+export function drill(ctx: Ctx, round: string | null | undefined, p: DrillParams, limit = 1000):
   { rows: DrillRow[]; total: number; label: string } {
   const m = mapTableFor(ctx, round);
   if (!m) return { rows: [], total: 0, label: "no mapping for this round" };
@@ -628,8 +628,7 @@ export function drill(ctx: Ctx, round: string | null | undefined, p: DrillParams
             m.first_signup, m.first_call_at, coalesce(m.counsellor,'') counsellor
        FROM ${m.table} m
       WHERE ${w.join(" AND ")}${m.where}
-      ORDER BY m.first_signup DESC NULLS LAST
-      LIMIT 1000`;
+      ORDER BY m.first_signup DESC NULLS LAST${limit > 0 ? ` LIMIT ${limit}` : ""}`;
   let rows: DrillRow[] = [];
   try { rows = db.prepare(sql).all() as DrillRow[]; } catch { rows = []; }
   let total = rows.length;

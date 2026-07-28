@@ -36,6 +36,24 @@ export default async function Drill({ searchParams }: { searchParams: Promise<Re
     id: one(sp.id), name: one(sp.name), phone: one(sp.phone),
   };
   const { rows, total, label } = drill(ctx, round, p);
+  // CSV link carries the exact filters in view, so the export always matches
+  // what is on screen — and it is NOT capped at 1,000.
+  const csvQs = (() => {
+    const q = new URLSearchParams();
+    if (ctx === "CSAT") q.set("ctx", "CSAT");
+    q.set("round", round);
+    const single: [string, string | null | undefined][] = [
+      ["stage", p.stage], ["act", p.act], ["reg", p.reg], ["age", p.age], ["speed", p.speed],
+      ["conn", p.conn], ["nocouns", p.nocouns], ["q", p.q], ["pstage", p.pstage],
+      ["cprog", p.cprog], ["sprog", p.sprog], ["id", p.id], ["name", p.name], ["phone", p.phone],
+    ];
+    for (const [k, v] of single) if (v) q.set(k, v);
+    const multi: [string, string[] | null | undefined][] = [
+      ["src", p.src], ["camp", p.camp], ["origin", p.origin], ["couns", p.couns],
+    ];
+    for (const [k, arr] of multi) for (const v of arr ?? []) q.append(k, v);
+    return q.toString();
+  })();
   const f = drillFacets(ctx, round);
   const back = `/?${ctx === "CSAT" ? "ctx=CSAT&" : ""}round=${round}`;
   const clear = `/drill?${ctx === "CSAT" ? "ctx=CSAT&" : ""}round=${round}`;
@@ -72,7 +90,9 @@ export default async function Drill({ searchParams }: { searchParams: Promise<Re
           <header>
             <h3>Matching students</h3>
             <span className="cap">
-              {total > rows.length ? `showing first ${nf(rows.length)} of ${nf(total)}` : `${nf(rows.length)} rows`}
+              {total > rows.length
+                ? `showing first ${nf(rows.length)} of ${nf(total)} — the table is capped for page weight, the CSV is not`
+                : `${nf(rows.length)} rows`}
               {" · filter in the header row · ⌘/ctrl-click for multiple"}
             </span>
           </header>
@@ -89,6 +109,9 @@ export default async function Drill({ searchParams }: { searchParams: Promise<Re
             <div className="dh-bar">
               <button type="submit" className="df-btn">Apply filters</button>
               <Link href={clear} className="chip">Clear all</Link>
+              <a href={`/drill/csv?${csvQs}`} className="chip dh-csv" download>
+                ↓ Download CSV{total > rows.length ? ` (all ${nf(total)})` : ""}
+              </a>
               {p.nocouns === "1" && <input type="hidden" name="nocouns" value="1" />}
             </div>
 
