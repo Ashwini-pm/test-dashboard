@@ -663,17 +663,20 @@ function funnelN3(round: Round = "NSAT-3", src?: Src): { base: number; rows: Fun
   // Combined sells BBA and BCA together, so the round itself has no program.
   // The Combined page DOES capture the student's choice, so split on that
   // (signup_programs). Leads with no signup are crm_only attribution rows.
+  // Program bifurcation on Lead and Registration, for EVERY CSAT tab. The round
+  // pills select a landing page (signup_tables); program is a separate dimension,
+  // so All and Combined are genuinely mixed while BBA/BCA resolve to one row.
   const progSplit = (parentKey: string, extraWhere: string): void => {
-    if (!(round === "CSAT-COMB" && csatMapReady())) return;
+    if (!(CSAT_ROUND_SET.has(round) && csatMapReady())) return;
     let rows2: { p: string; n: number }[] = [];
     try {
       rows2 = db.prepare(
         `SELECT coalesce(nullif(signup_programs,''),'no signup (CRM-only lead)') p, COUNT(*) n
-           FROM csat_map WHERE round_tag = 'CSAT-COMB'${extraWhere}
+           FROM csat_map WHERE round_tag IN (${inc})${extraWhere}
           GROUP BY 1 ORDER BY n DESC`
       ).all() as { p: string; n: number }[];
     } catch { return; }
-    if (rows2.length < 2) return;
+    if (!rows2.length) return;
     rows[rows.length - 1].expandable = true; // the row we just pushed
     for (const r of rows2) {
       if (!r.n) continue;
