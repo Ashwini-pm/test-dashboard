@@ -154,8 +154,14 @@ async function refresh(): Promise<void> {
       console.warn("[db] NSAT CSAT project fetch failed:", e?.message);
       return null;
     }),
+    // Slot forms: was a sequential pull AFTER this batch, adding a full
+    // round-trip to every cold hydrate. It belongs in the batch.
+    pullTable("nsat_student_slots").catch((e) => {
+      console.warn("[db] student_slots pull failed:", e?.message);
+      return null;
+    }),
   ]);
-  const [results, booked, olsb, csat] = pulled;
+  const [results, booked, olsb, csat, slots] = pulled;
   // Never cache an empty pull: rendering all-zeros is worse than retrying.
   const gotLeads = results.find(([t]) => t === "leads")?.[1]?.length ?? 0;
   if (gotLeads === 0) throw new Error("leads pull returned 0 rows; keeping previous data");
@@ -164,11 +170,7 @@ async function refresh(): Promise<void> {
   if (olsb && olsb.length > 0) overlayOLSB(olsb);
   if (csat) overlayNsat4Csat(csat);
   // Slot-form submissions (live via Apps Script) -> slot_forms, matched by phone.
-  try {
-    overlaySlotForms(await pullTable("nsat_student_slots"));
-  } catch (e: any) {
-    console.warn("[db] student_slots pull failed:", e?.message);
-  }
+  if (slots) { try { overlaySlotForms(slots); } catch (e: any) { console.warn("[db] slot overlay failed:", e?.message); } }
   deriveStages();
   enrichNsat3MapCalls();
   buildMapIndexes();
@@ -213,6 +215,11 @@ function buildMapIndexes(): void {
   run("CREATE INDEX IF NOT EXISTS ix_csatmap_tag ON csat_map(round_tag)");
   run("CREATE INDEX IF NOT EXISTS ix_n4map_lead ON nsat4_map(lead_id)");
   run("CREATE INDEX IF NOT EXISTS ix_leads_student ON leads(student_id)");
+  // Stage tables carry no lead_id index in schema.sql, yet /students runs a
+  // correlated subquery per lead against every one of them.
+  for (const t of ["registrations", "test_results", "slot_forms", "counselling_sessions", "offer_letters", "payments"]) {
+    run(`CREATE INDEX IF NOT EXISTS ix_${t}_lead ON ${t}(lead_id)`);
+  }
   run("CREATE INDEX IF NOT EXISTS ix_leads_round ON leads(nsat_round)");
   // Post-test stage membership, precomputed ONCE per hydrate and keyed the way the
   // maps are keyed. Replaces the per-row EXISTS subqueries in postTestTable/drill.

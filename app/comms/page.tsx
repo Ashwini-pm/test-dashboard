@@ -1,6 +1,8 @@
 import { ensureFresh } from "@/lib/db";
 import { parseCtx, coverage, commsByDay, dispositions, roundOptions, defaultRound } from "@/lib/v2";
 import RoundSelect from "@/components/RoundSelect";
+import { cohortForRound, callingFunnel, callingFunnelByProgram, activityByDay, cohortReady, overview as cohortOverview } from "@/lib/cohort";
+import { CallingFunnelBlock } from "@/components/CallingFunnel";
 
 export const dynamic = "force-dynamic";
 // cold-start hydrate pulls ~20 tables; the default 10s limit was too tight
@@ -16,6 +18,14 @@ export default async function Comms({ searchParams }: { searchParams: Promise<Re
   const cov = coverage(ctx, round);
   const days = commsByDay(ctx, round);
   const disp = dispositions(ctx, round);
+  // Calling funnel, counted in LEADS. Lives here because it is a communication
+  // view; Overview is fixed and must not gain sections.
+  const cSel = cohortForRound(ctx, round);
+  const cOk = !!cSel && cohortReady(cSel.key);
+  const cSegs = cOk && cSel ? callingFunnel(cSel.key, cSel.where) : [];
+  const cOv = cOk && cSel ? cohortOverview(cSel.key, cSel.where) : null;
+  const cProg = cOk && cSel && !cSel.where ? callingFunnelByProgram(cSel.key) : [];
+  const cDays = cOk && cSel ? activityByDay(cSel.key, cSel.where) : [];
 
   return (
     <>
@@ -27,6 +37,17 @@ export default async function Comms({ searchParams }: { searchParams: Promise<Re
         <div className="spacer" />
         <RoundSelect options={roundOptions(ctx)} current={round} />
       </div>
+
+      {cOk && cOv && cSegs.length > 0 && (
+        <CallingFunnelBlock
+          segs={cSegs}
+          leads={cOv.total}
+          registrations={cOv.registrations}
+          byProgram={cProg}
+          days={cDays}
+          label={round}
+        />
+      )}
 
       <section className="grid mb">
         <div className="card">

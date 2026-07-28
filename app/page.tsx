@@ -10,8 +10,6 @@ import SourcePie from "@/components/SourcePie";
 import FunnelCallTable from "@/components/FunnelCallTable";
 import { ActionCoverage, UntouchedAgeing, SourceActionTable, SpeedToLead } from "@/components/CoverageViews";
 import { funnel, type Round } from "@/lib/queries";
-import { cohortForRound, callingFunnel, callingFunnelByProgram, activityByDay, cohortReady, overview as cohortOverview } from "@/lib/cohort";
-import { CallingFunnelBlock } from "@/components/CallingFunnel";
 import FunnelView from "@/components/FunnelView";
 import RoundSelect from "@/components/RoundSelect";
 
@@ -36,14 +34,6 @@ export default async function Overview({ searchParams }: { searchParams: Promise
   const srcStages = sourceStages(ctx, round);
   // base query for drill-down links (no leading &)
   const dq = `${ctx === "CSAT" ? "ctx=CSAT&" : ""}round=${round}`;
-  // Calling funnel: lead counts from this test's lead map. Present for every
-  // test that has one (NSAT-3/4/5, CSAT-1); absent rounds simply skip the block.
-  const cSel = cohortForRound(ctx, round);
-  const cOk = !!cSel && cohortReady(cSel.key);
-  const cSegs = cOk && cSel ? callingFunnel(cSel.key, cSel.where) : [];
-  const cOv = cOk && cSel ? cohortOverview(cSel.key, cSel.where) : null;
-  const cProg = cOk && cSel && !cSel.where ? callingFunnelByProgram(cSel.key) : [];
-  const cDays = cOk && cSel ? activityByDay(cSel.key, cSel.where) : [];
   // Coverage views only render where the map actually carries calling data.
   const hasCoverage = coverageAvailable(ctx, round);
   const buckets = hasCoverage ? actionCoverage(ctx, round) : [];
@@ -93,17 +83,6 @@ export default async function Overview({ searchParams }: { searchParams: Promise
           </div>
         ))}
       </section>
-
-      {cOk && cOv && cSegs.length > 0 && (
-        <CallingFunnelBlock
-          segs={cSegs}
-          leads={cOv.total}
-          registrations={cOv.registrations}
-          byProgram={cProg}
-          days={cDays}
-          label={round}
-        />
-      )}
 
       {/* Conversion funnel */}
       <section className="grid mb">
