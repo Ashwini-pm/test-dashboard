@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { ensureFresh } from "@/lib/db";
+import { ensureFresh, dataLoaded } from "@/lib/db";
 import {
   parseCtx, stageCounts, roundOptions, defaultRound, ctxRounds, sankeyTree, sourceStages, sourceLegend,
   coverageAvailable, actionCoverage, untouchedAgeing, sourceAction, speedToLead,
@@ -14,12 +14,15 @@ import FunnelView from "@/components/FunnelView";
 import RoundSelect from "@/components/RoundSelect";
 
 export const dynamic = "force-dynamic";
+// cold-start hydrate pulls ~20 tables; the default 10s limit was too tight
+export const maxDuration = 60;
 
 const nf = (n: number) => n.toLocaleString("en-IN");
 
 export default async function Overview({ searchParams }: { searchParams: Promise<Record<string, string | undefined>> }) {
   const sp = await searchParams;
   await ensureFresh();
+  const loaded = dataLoaded();
   const ctx = parseCtx(sp.ctx);
   const round = sp.round || defaultRound(ctx);
   const qs = `${ctx === "CSAT" ? "&ctx=CSAT" : ""}${round ? `&round=${round}` : ""}`;
@@ -59,6 +62,17 @@ export default async function Overview({ searchParams }: { searchParams: Promise
         <RoundSelect options={roundOptions(ctx)} current={round} />
       </div>
 
+
+      {!loaded && (
+        <section className="grid mb">
+          <div className="card co-caveat">
+            <p className="sb-empty">
+              <b>Data did not load.</b> The live pull failed or timed out on this request, so every number
+              below would read zero. Hit <b>Sync now</b> — this is a load failure, not an empty cohort.
+            </p>
+          </div>
+        </section>
+      )}
 
       {/* Stage KPIs + intent pulse */}
       <section className="grid stage-kpis">

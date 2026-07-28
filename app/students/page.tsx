@@ -4,6 +4,8 @@ import { parseCtx, students, leaks, intentSummary, roundOptions, defaultRound } 
 import RoundSelect from "@/components/RoundSelect";
 
 export const dynamic = "force-dynamic";
+// cold-start hydrate pulls ~20 tables; the default 10s limit was too tight
+export const maxDuration = 60;
 
 const nf = (n: number) => n.toLocaleString("en-IN");
 const INTENT_CLS: Record<string, string> = { hot: "i-hot", warm: "i-warm", cooling: "i-cool", cold: "i-cold", converted: "i-conv", closed: "i-closed" };

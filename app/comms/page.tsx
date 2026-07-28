@@ -3,6 +3,8 @@ import { parseCtx, coverage, commsByDay, dispositions, roundOptions, defaultRoun
 import RoundSelect from "@/components/RoundSelect";
 
 export const dynamic = "force-dynamic";
+// cold-start hydrate pulls ~20 tables; the default 10s limit was too tight
+export const maxDuration = 60;
 const nf = (n: number) => n.toLocaleString("en-IN");
 const pct = (a: number, b: number) => (b > 0 ? `${Math.round((a / b) * 100)}%` : "–");
 

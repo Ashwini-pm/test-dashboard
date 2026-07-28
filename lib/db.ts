@@ -557,4 +557,14 @@ export async function ensureFresh(force = false): Promise<void> {
   await global.__nsatInflight;
 }
 
+// True only when a hydrate actually landed rows. Pages use this to show an
+// honest "not loaded" state instead of rendering a screen full of zeros when a
+// cold-start hydrate times out.
+export function dataLoaded(): boolean {
+  try {
+    const r = db.prepare("SELECT COUNT(*) n FROM leads").get() as any;
+    return Number(r?.n ?? 0) > 0;
+  } catch { return false; }
+}
+
 export default db;
