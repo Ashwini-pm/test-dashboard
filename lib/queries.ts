@@ -1,9 +1,9 @@
 import db from "./db";
 
 export type Round =
-  | "NSAT-2" | "NSAT-3" | "NSAT-4" | "Combined"
+  | "NSAT-2" | "NSAT-3" | "NSAT-4" | "NSAT-5" | "Combined"
   | "CSAT" | "CSAT-BBA" | "CSAT-BCA" | "CSAT-COMB";
-export const ROUNDS: Round[] = ["NSAT-2", "NSAT-3", "NSAT-4", "Combined"];
+export const ROUNDS: Round[] = ["NSAT-2", "NSAT-3", "NSAT-4", "NSAT-5", "Combined"];
 // CSAT section sub-programs (All = the three together).
 export const CSAT_ROUNDS: { key: Round; label: string }[] = [
   { key: "CSAT", label: "All" },
@@ -15,6 +15,7 @@ export const CSAT_ROUNDS: { key: Round; label: string }[] = [
 export function normalizeRound(v: string | undefined | null): Round {
   if (v === "NSAT-3") return "NSAT-3";
   if (v === "NSAT-4") return "NSAT-4";
+  if (v === "NSAT-5") return "NSAT-5";
   if (v === "CSAT" || v === "CSAT-BBA" || v === "CSAT-BCA" || v === "CSAT-COMB") return v;
   if (v === "Combined") return "Combined";
   return "NSAT-2";
@@ -26,9 +27,10 @@ function roundList(round: Round): string[] {
   if (round === "NSAT-2") return ["NSAT-2"];
   if (round === "NSAT-3") return ["NSAT-3"];
   if (round === "NSAT-4") return ["NSAT-4"];
+  if (round === "NSAT-5") return ["NSAT-5"];
   if (round === "CSAT") return ["CSAT-BBA", "CSAT-BCA", "CSAT-COMB"];
   if (round === "CSAT-BBA" || round === "CSAT-BCA" || round === "CSAT-COMB") return [round];
-  return ["NSAT-2", "NSAT-3", "NSAT-4"];
+  return ["NSAT-2", "NSAT-3", "NSAT-4", "NSAT-5"];
 }
 function inClause(round: Round): string {
   return roundList(round)
@@ -325,6 +327,12 @@ function nsat3MapReady(): boolean {
     return int(db.prepare("SELECT COUNT(*) n FROM nsat3_map").get() as any) > 0;
   } catch { return false; }
 }
+function n5MapReady(): boolean {
+  try {
+    if (!int(db.prepare("SELECT COUNT(*) n FROM sqlite_master WHERE type='table' AND name='cohort_nsat5'").get() as any)) return false;
+    return int(db.prepare("SELECT COUNT(*) n FROM cohort_nsat5").get() as any) > 0;
+  } catch { return false; }
+}
 function n4MapReady(): boolean {
   try {
     if (!int(db.prepare("SELECT COUNT(*) n FROM sqlite_master WHERE type='table' AND name='nsat4_map'").get() as any)) return false;
@@ -355,7 +363,9 @@ export function stageKpis(round: Round, src?: Src): StageKpi[] {
   const passed = c(`SELECT COUNT(*) n FROM test_results x ${jl(" AND x.result='pass'")}`);
   const failed = c(`SELECT COUNT(*) n FROM test_results x ${jl(" AND x.result='fail'")}`);
   const achieved: Record<string, number> = {
-    registration: (round === "NSAT-4" && !src && n4MapReady())
+    registration: (round === "NSAT-5" && !src && n5MapReady())
+      ? c(`SELECT COUNT(*) n FROM cohort_nsat5 WHERE registered='paid'`)
+      : (round === "NSAT-4" && !src && n4MapReady())
       ? c(`SELECT COUNT(*) n FROM nsat4_map WHERE registered='paid'`)
       : (round === "NSAT-3" && !src && nsat3MapReady())
       ? c(`SELECT COUNT(*) n FROM nsat3_map WHERE reg_status='paid'`)
@@ -498,7 +508,7 @@ export function alerts(round: Round): AlertCard[] {
 export function funnel(round: Round, src?: Src): { base: number; rows: FunnelRow[] } {
   // NSAT-4 and CSAT use the same real-stage funnel layout as NSAT-3; only
   // NSAT-2/Combined keep the legacy canonical-stages view.
-  if (round === "NSAT-3" || round === "NSAT-4" || round.startsWith("CSAT")) return funnelN3(round, src);
+  if (round === "NSAT-3" || round === "NSAT-4" || round === "NSAT-5" || round.startsWith("CSAT")) return funnelN3(round, src);
   return funnelN2(round);
 }
 
@@ -602,14 +612,19 @@ function funnelN3(round: Round = "NSAT-3", src?: Src): { base: number; rows: Fun
   const useNsat3 = round === "NSAT-3" && !src && nsat3MapReady();
   const useCsat = CSAT_ROUND_SET.has(round) && !src && csatMapReady();
   const useN4 = round === "NSAT-4" && !src && n4MapReady();
-  const leads = useN4
+  const useN5 = round === "NSAT-5" && !src && n5MapReady();
+  const leads = useN5
+    ? c(`SELECT COUNT(*) n FROM cohort_nsat5`)
+    : useN4
     ? c(`SELECT COUNT(*) n FROM nsat4_map`)
     : useNsat3
     ? c(`SELECT COUNT(*) n FROM nsat3_map`)
     : useCsat
     ? c(`SELECT COUNT(*) n FROM csat_map${csatMapWhere(round, false)}`)
     : c(`SELECT COUNT(*) n FROM leads l WHERE l.nsat_round IN (${inc})${S}`);
-  const reg = useN4
+  const reg = useN5
+    ? c(`SELECT COUNT(*) n FROM cohort_nsat5 WHERE registered='paid'`)
+    : useN4
     ? c(`SELECT COUNT(*) n FROM nsat4_map WHERE registered='paid'`)
     : useNsat3
     ? c(`SELECT COUNT(*) n FROM nsat3_map WHERE reg_status='paid'`)

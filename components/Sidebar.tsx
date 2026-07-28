@@ -30,12 +30,21 @@ function SidebarInner() {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [target, setTarget] = useState("");
-  const qs = (c: string) => (c === "NSAT" ? "" : `?ctx=${c}`);
+  // Nav links must carry the CURRENT round, so picking NSAT-4 up top and then
+  // clicking Cohorts keeps you on NSAT-4. One place decides the round.
+  const round = params.get("round");
+  const qs = (c: string, keepRound = true) => {
+    const p = new URLSearchParams();
+    if (c === "CSAT") p.set("ctx", c);
+    if (keepRound && round && c === ctx) p.set("round", round);
+    const q = p.toString();
+    return q ? `?${q}` : "";
+  };
 
   const switchCtx = (c: string) => {
     if (c === ctx) return;
     setTarget(c);
-    startTransition(() => router.push(`${pathname}${qs(c)}`));
+    startTransition(() => router.push(`${pathname}${qs(c, false)}`));
   };
 
   return (

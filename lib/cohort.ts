@@ -61,11 +61,22 @@ export const COHORTS: Record<CohortKey, CohortMeta> = {
   },
 };
 
-export function parseCohort(v: string | undefined | null): CohortKey {
-  if (v === "CSAT-1" || v === "NSAT-5") return v;
-  return "NSAT-4";
+// The cohort shown is DERIVED from the top-bar round, never chosen separately.
+// One place decides which round you are looking at, and every page follows it.
+// CSAT rounds narrow the same map the way the rest of the dashboard does:
+// by signup_tables, so the structure stays constant across pages.
+export function cohortForRound(ctx: "NSAT" | "CSAT", round?: string | null):
+  { key: CohortKey; where: string; scope: string } | null {
+  if (ctx === "CSAT") {
+    if (round === "BBA")      return { key: "CSAT-1", where: " AND signup_tables = 'bba'", scope: "BBA page" };
+    if (round === "BCA")      return { key: "CSAT-1", where: " AND signup_tables = 'bca'", scope: "BCA page" };
+    if (round === "Combined") return { key: "CSAT-1", where: " AND coalesce(signup_tables,'') NOT IN ('bba','bca')", scope: "Combined page" };
+    return { key: "CSAT-1", where: "", scope: "all CSAT-1" };
+  }
+  if (round === "NSAT-4") return { key: "NSAT-4", where: "", scope: "all NSAT-4" };
+  if (round === "NSAT-5") return { key: "NSAT-5", where: "", scope: "all NSAT-5" };
+  return null; // NSAT-2 / NSAT-3 have no lead map
 }
-export const COHORT_ORDER: CohortKey[] = ["NSAT-4", "NSAT-5", "CSAT-1"];
 
 const int = (row: any): number => Number((row && (row.n ?? row)) || 0);
 const has = (t: string): boolean => {

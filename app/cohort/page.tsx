@@ -1,9 +1,10 @@
-import Link from "next/link";
 import { ensureFresh } from "@/lib/db";
 import {
-  COHORTS, COHORT_ORDER, parseCohort, cohortReady, overview, callingSplit, bySource,
+  COHORTS, cohortForRound, cohortReady, overview, callingSplit, bySource,
   byProgram, registrationsByDay, byCounsellor, lastRefreshed,
 } from "@/lib/cohort";
+import { parseCtx, roundOptions, defaultRound } from "@/lib/v2";
+import RoundSelect from "@/components/RoundSelect";
 
 export const dynamic = "force-dynamic";
 // cold-start hydrate pulls ~20 tables; the default 10s limit was too tight
@@ -15,37 +16,46 @@ const pc = (a: number, b: number) => (b > 0 ? `${Math.round((a / b) * 100)}%` : 
 export default async function Cohort({ searchParams }: { searchParams: Promise<Record<string, string | undefined>> }) {
   const sp = await searchParams;
   await ensureFresh();
-  const key = parseCohort(sp.c);
-  const meta = COHORTS[key];
-  const ready = cohortReady(key);
+  const ctx = parseCtx(sp.ctx);
+  const round = sp.round || defaultRound(ctx);
+  const sel = cohortForRound(ctx, round);
+  const key = sel?.key ?? null;
+  const meta = key ? COHORTS[key] : null;
+  const ready = key ? cohortReady(key) : false;
+  const w = sel?.where ?? "";
 
-  const ov = ready ? overview(key) : null;
-  const calls = ready ? callingSplit(key) : [];
-  const srcCampaign = ready ? bySource(key, "campaign_source") : [];
-  const srcCrm = ready ? bySource(key, "crm_source_category") : [];
-  const progs = ready ? byProgram(key) : [];
-  const regDays = ready ? registrationsByDay(key) : [];
-  const couns = ready ? byCounsellor(key) : [];
-  const refreshed = ready ? lastRefreshed(key) : null;
+  const ov = key && ready ? overview(key, w) : null;
+  const calls = key && ready ? callingSplit(key, w) : [];
+  const srcCampaign = key && ready ? bySource(key, "campaign_source", w) : [];
+  const srcCrm = key && ready ? bySource(key, "crm_source_category", w) : [];
+  const progs = key && ready && !w ? byProgram(key) : [];
+  const regDays = key && ready ? registrationsByDay(key) : [];
+  const couns = key && ready ? byCounsellor(key) : [];
+  const refreshed = key && ready ? lastRefreshed(key) : null;
 
   return (
     <>
       <div className="topbar">
         <div>
-          <h1>{meta.label}</h1>
+          <h1>{round} · Cohort</h1>
           <div className="sub">
-            {meta.window} · {meta.closed ? "intake closed, numbers frozen" : "live"} · refresh {meta.refresh}
+            {meta
+              ? `${meta.window} · ${meta.closed ? "intake closed, numbers frozen" : "live"} · refresh ${meta.refresh}${sel?.scope ? ` · ${sel.scope}` : ""}`
+              : "no lead map for this round"}
           </div>
         </div>
         <div className="spacer" />
-        <div className="rounds">
-          {COHORT_ORDER.map((k) => (
-            <Link key={k} href={`/cohort?c=${k}`} className={k === key ? "on" : undefined}>{k}</Link>
-          ))}
-        </div>
+        <RoundSelect options={roundOptions(ctx)} current={round} />
       </div>
 
-      {!ready || !ov ? (
+      {!meta ? (
+        <section className="grid mb"><div className="card">
+          <p className="sb-empty">
+            <b>No cohort map for {round}.</b> Cohort analysis needs a prepared lead map, which exists for
+            NSAT-4, NSAT-5 and CSAT-1. Pick one of those in the round selector above.
+          </p>
+        </div></section>
+      ) : !ready || !ov ? (
         <section className="grid mb"><div className="card">
           <p className="sb-empty">Lead map for {meta.label} not loaded yet. Hit Sync now.</p>
         </div></section>
@@ -280,8 +290,8 @@ export default async function Cohort({ searchParams }: { searchParams: Promise<R
                   <b>Lead id is the only key.</b> Nothing is joined or deduplicated on email or phone, and a signup
                   with no lead id is not counted anywhere.
                 </li>
-                {!meta.hasPaidAt && <li><b>No payment timestamp</b> in this map, so registrations over time is not shown for {meta.label}.</li>}
-                {refreshed && <li>Map last refreshed: <b>{String(refreshed).replace("T", " ").slice(0, 19)}</b> ({meta.refresh}).</li>}
+                {meta && !meta.hasPaidAt && <li><b>No payment timestamp</b> in this map, so registrations over time is not shown for {meta.label}.</li>}
+                {refreshed && <li>Map last refreshed: <b>{String(refreshed).replace("T", " ").slice(0, 19)}</b> ({meta?.refresh}).</li>}
               </ul>
             </div>
           </section>

@@ -18,11 +18,11 @@ export function ctxRounds(ctx: Ctx, round?: string | null): string[] {
     if (round === "Combined") return ["CSAT-COMB"];
     return ["CSAT-BBA", "CSAT-BCA", "CSAT-COMB"];
   }
-  if (round === "NSAT-2" || round === "NSAT-3" || round === "NSAT-4") return [round];
-  return ["NSAT-2", "NSAT-3", "NSAT-4"];
+  if (round === "NSAT-2" || round === "NSAT-3" || round === "NSAT-4" || round === "NSAT-5") return [round];
+  return ["NSAT-2", "NSAT-3", "NSAT-4", "NSAT-5"];
 }
 export function roundOptions(ctx: Ctx): string[] {
-  return ctx === "CSAT" ? ["All", "BBA", "BCA", "Combined"] : ["NSAT-2", "NSAT-3", "NSAT-4"];
+  return ctx === "CSAT" ? ["All", "BBA", "BCA", "Combined"] : ["NSAT-2", "NSAT-3", "NSAT-4", "NSAT-5"];
 }
 // No "All": rounds are separate cohorts. Default = the running round.
 export function defaultRound(ctx: Ctx): string {
@@ -61,6 +61,9 @@ function mapUniverse(ctx: Ctx, round?: string | null): { table: string; where: s
   }
   if (ctx === "NSAT" && round === "NSAT-4" && tableHasRows("nsat4_map")) {
     return { table: "nsat4_map", where: "" };
+  }
+  if (ctx === "NSAT" && round === "NSAT-5" && tableHasRows("cohort_nsat5")) {
+    return { table: "cohort_nsat5", where: "" };
   }
   return null;
 }
@@ -136,6 +139,9 @@ function mapTableFor(ctx: Ctx, round?: string | null): { table: string; where: s
   // NSAT-4 has its own map, and it carries offer_letter / seat_booked inline.
   if (ctx === "NSAT" && round === "NSAT-4" && has("nsat4_map")) {
     return { table: "nsat4_map", where: "" };
+  }
+  if (ctx === "NSAT" && round === "NSAT-5" && has("cohort_nsat5")) {
+    return { table: "cohort_nsat5", where: "" };
   }
   return null;
 }
