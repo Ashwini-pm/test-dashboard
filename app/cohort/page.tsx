@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { ensureFresh } from "@/lib/db";
 import {
-  COHORTS, parseCohort, cohortReady, overview, callingSplit, bySource,
+  COHORTS, COHORT_ORDER, parseCohort, cohortReady, overview, callingSplit, bySource,
   byProgram, registrationsByDay, byCounsellor, lastRefreshed,
 } from "@/lib/cohort";
 
@@ -37,7 +37,7 @@ export default async function Cohort({ searchParams }: { searchParams: Promise<R
         </div>
         <div className="spacer" />
         <div className="rounds">
-          {(["NSAT-4", "CSAT-1"] as const).map((k) => (
+          {COHORT_ORDER.map((k) => (
             <Link key={k} href={`/cohort?c=${k}`} className={k === key ? "on" : undefined}>{k}</Link>
           ))}
         </div>
@@ -260,7 +260,7 @@ export default async function Cohort({ searchParams }: { searchParams: Promise<R
               <header><h3>Read this before quoting the numbers</h3></header>
               <ul>
                 <li>
-                  <b>The CRM dump only covers leads created from {key === "NSAT-4" ? "14 Jul" : "20 Jul"}.</b> A student who
+                  <b>The CRM dump only covers leads created from {key === "CSAT-1" ? "20 Jul" : key === "NSAT-5" ? "27 Jul" : "14 Jul"}.</b> A student who
                   signed up during the campaign but was already an older lead in the CRM has no dump row. They show as
                   <code> origin = capture_only</code> with NULL calling columns, and land in the
                   <b> No call data</b> column: <b>{nf(ov.noCallData)}</b> leads here.

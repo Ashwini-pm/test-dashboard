@@ -15,7 +15,7 @@ import db from "./db";
 // CRM dump row and it shows zero attempts. total_calls IS NULL means there is no
 // dump row at all, so calls are unknown. Never merge them.
 
-export type CohortKey = "NSAT-4" | "CSAT-1";
+export type CohortKey = "NSAT-4" | "NSAT-5" | "CSAT-1";
 
 export interface CohortMeta {
   key: CohortKey;
@@ -39,6 +39,16 @@ export const COHORTS: Record<CohortKey, CohortMeta> = {
     programCol: null,
     hasPaidAt: true,
   },
+  "NSAT-5": {
+    key: "NSAT-5",
+    table: "cohort_nsat5",
+    label: "NSAT-5",
+    window: "opens 27 Jul 2026 15:30 IST (NSAT-4 cutoff)",
+    closed: false,
+    refresh: "automatic",
+    programCol: null,
+    hasPaidAt: true,
+  },
   "CSAT-1": {
     key: "CSAT-1",
     table: "cohort_csat1",
@@ -52,8 +62,10 @@ export const COHORTS: Record<CohortKey, CohortMeta> = {
 };
 
 export function parseCohort(v: string | undefined | null): CohortKey {
-  return v === "CSAT-1" ? "CSAT-1" : "NSAT-4";
+  if (v === "CSAT-1" || v === "NSAT-5") return v;
+  return "NSAT-4";
 }
+export const COHORT_ORDER: CohortKey[] = ["NSAT-4", "NSAT-5", "CSAT-1"];
 
 const int = (row: any): number => Number((row && (row.n ?? row)) || 0);
 const has = (t: string): boolean => {

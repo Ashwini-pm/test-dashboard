@@ -425,7 +425,7 @@ async function fetchCsatProject(): Promise<CsatPull | null> {
     return chunks.flat();
   };
   return Promise.all(
-    ["nsat4", "bba", "bca", "combined", "nsat3_lead_map", "lead_map", "nsat4_lead_map"].map(async (t) => ({ table: t, rows: await pull(t) }))
+    ["nsat4", "bba", "bca", "combined", "nsat3_lead_map", "lead_map", "nsat4_lead_map", "nsat5_lead_map"].map(async (t) => ({ table: t, rows: await pull(t) }))
   );
 }
 
@@ -465,6 +465,11 @@ function overlayNsat4Csat(pulls: CsatPull): void {
     for (const { table, rows } of pulls) {
       if (table === "nsat3_lead_map") {
         for (const r of rows) insMap.run(String(r.lead_id ?? ""), r.reg_status ?? null, r.campaign_source ?? null, r.origin ?? null, r.crm_source_category ?? null, r.total_calls ?? null, r.connected_calls ?? null, r.first_signup ?? null, r.first_call_at ?? null, r.last_call_at ?? null, r.counsellor ?? null, r.name ?? null, r.phone ?? null, r.utm_campaign ?? null);
+        continue;
+      }
+      if (table === "nsat5_lead_map") {
+        // NSAT-5 has the same shape as NSAT-4; it only feeds the cohort page.
+        mirrorRaw("cohort_nsat5", rows);
         continue;
       }
       if (table === "nsat4_lead_map") {
