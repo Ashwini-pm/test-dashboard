@@ -15,7 +15,7 @@ import db from "./db";
 // CRM dump row and it shows zero attempts. total_calls IS NULL means there is no
 // dump row at all, so calls are unknown. Never merge them.
 
-export type CohortKey = "NSAT-4" | "NSAT-5" | "CSAT-1";
+export type CohortKey = "NSAT-3" | "NSAT-4" | "NSAT-5" | "CSAT-1";
 
 export interface CohortMeta {
   key: CohortKey;
@@ -24,11 +24,17 @@ export interface CohortMeta {
   window: string;
   closed: boolean;
   refresh: string;
-  programCol: string | null; // CSAT-1 splits by program; NSAT-4 is B.Tech only
-  hasPaidAt: boolean;        // registrations-over-time needs paid_at (NSAT-4 only)
+  programCol: string | null; // CSAT-1 splits by program; NSAT rounds are B.Tech only
+  hasPaidAt: boolean;        // registrations-over-time needs paid_at
+  paidCol: string;           // nsat3_lead_map calls it reg_status, the rest registered
 }
 
 export const COHORTS: Record<CohortKey, CohortMeta> = {
+  "NSAT-3": {
+    key: "NSAT-3", table: "cohort_nsat3", label: "NSAT-3",
+    window: "1 Jul 2026 → 13 Jul 2026", closed: true, refresh: "automatic",
+    programCol: null, hasPaidAt: false, paidCol: "reg_status",
+  },
   "NSAT-4": {
     key: "NSAT-4",
     table: "cohort_nsat4",
@@ -38,6 +44,7 @@ export const COHORTS: Record<CohortKey, CohortMeta> = {
     refresh: "every 5 minutes",
     programCol: null,
     hasPaidAt: true,
+    paidCol: "registered",
   },
   "NSAT-5": {
     key: "NSAT-5",
@@ -48,6 +55,7 @@ export const COHORTS: Record<CohortKey, CohortMeta> = {
     refresh: "automatic",
     programCol: null,
     hasPaidAt: true,
+    paidCol: "registered",
   },
   "CSAT-1": {
     key: "CSAT-1",
@@ -58,6 +66,7 @@ export const COHORTS: Record<CohortKey, CohortMeta> = {
     refresh: "every 10 minutes",
     programCol: "signup_programs",
     hasPaidAt: false,
+    paidCol: "registered",
   },
 };
 
@@ -73,6 +82,7 @@ export function cohortForRound(ctx: "NSAT" | "CSAT", round?: string | null):
     if (round === "Combined") return { key: "CSAT-1", where: " AND coalesce(signup_tables,'') NOT IN ('bba','bca')", scope: "Combined page" };
     return { key: "CSAT-1", where: "", scope: "all CSAT-1" };
   }
+  if (round === "NSAT-3") return { key: "NSAT-3", where: "", scope: "all NSAT-3" };
   if (round === "NSAT-4") return { key: "NSAT-4", where: "", scope: "all NSAT-4" };
   if (round === "NSAT-5") return { key: "NSAT-5", where: "", scope: "all NSAT-5" };
   return null; // NSAT-2 / NSAT-3 have no lead map
@@ -103,8 +113,8 @@ export function overview(k: CohortKey, where = ""): Overview {
     total: c("1=1"),
     signup: c("origin IN ('both','capture_only')"),
     attributed: c("origin = 'crm_only'"),
-    registrations: c("registered = 'paid'"),
-    pending: c("registered = 'pending'"),
+    registrations: c(`${COHORTS[k].paidCol} = 'paid'`),
+    pending: c(`${COHORTS[k].paidCol} = 'pending'`),
     offerLetters: c("nullif(offer_letter,'') IS NOT NULL"),
     seats: c("seat_booked = 'Yes'"),
     noCallData: c("total_calls IS NULL"),
@@ -123,8 +133,8 @@ export function callingSplit(k: CohortKey, where = ""): CallRow[] {
   const t = COHORTS[k].table;
   const seg: [string, string, string][] = [
     ["all", "All leads", "1=1"],
-    ["unreg", "Not registered", "registered <> 'paid'"],
-    ["reg", "Registered", "registered = 'paid'"],
+    ["unreg", "Not registered", `${COHORTS[k].paidCol} <> 'paid'`],
+    ["reg", "Registered", `${COHORTS[k].paidCol} = 'paid'`],
   ];
   return seg.map(([key, label, cond]) => {
     const c = (extra: string) => q(`SELECT COUNT(*) n FROM ${t} WHERE ${cond}${extra}${where}`);
@@ -159,7 +169,7 @@ export function bySource(k: CohortKey, col: "campaign_source" | "crm_source_cate
   const g = `lower(trim(coalesce(nullif(${col},''),'(none)')))`;
   const r = rows<{ s: string; leads: number; reg: number; called: number; conn: number; attr: number }>(
     `SELECT ${g} s, COUNT(*) leads,
-            SUM(CASE WHEN registered='paid' THEN 1 ELSE 0 END) reg,
+            SUM(CASE WHEN ${COHORTS[k].paidCol}='paid' THEN 1 ELSE 0 END) reg,
             SUM(CASE WHEN total_calls > 0 THEN 1 ELSE 0 END) called,
             SUM(CASE WHEN connected_calls > 0 THEN 1 ELSE 0 END) conn,
             SUM(CASE WHEN origin='crm_only' THEN 1 ELSE 0 END) attr
@@ -192,12 +202,81 @@ export function byProgram(k: CohortKey): ProgramRow[] {
             COUNT(*) leads,
             SUM(CASE WHEN origin IN ('both','capture_only') THEN 1 ELSE 0 END) signup,
             SUM(CASE WHEN origin='crm_only' THEN 1 ELSE 0 END) attributed,
-            SUM(CASE WHEN registered='paid' THEN 1 ELSE 0 END) registrations,
+            SUM(CASE WHEN ${meta.paidCol}='paid' THEN 1 ELSE 0 END) registrations,
             SUM(CASE WHEN total_calls > 0 THEN 1 ELSE 0 END) called,
             SUM(CASE WHEN connected_calls > 0 THEN 1 ELSE 0 END) connected,
             SUM(CASE WHEN total_calls IS NULL THEN 1 ELSE 0 END) noData
        FROM ${t} GROUP BY 1 ORDER BY leads DESC`
   ).map((r) => ({ ...r, leads: Number(r.leads) }));
+}
+
+// ---------------------------------------------------------------------------
+// Calling funnel — LEADS, never calls. Nobody asks how many dials were made.
+// ---------------------------------------------------------------------------
+// Four mutually exclusive buckets that always add back to the lead count:
+//   touched     connected_calls > 0                    we reached this person
+//   notTouched  total_calls > 0 AND connected_calls = 0 we called, no pickup
+//   notCalled   total_calls = 0                         no attempt on record
+//   noData      total_calls IS NULL                     we cannot say
+// noData is NEVER folded into notCalled: "we didn't call" and "we don't know"
+// are different claims. These leads pre-date the Redash dump window that feeds
+// calling info, so the dump has no row for them.
+export interface FunnelSeg {
+  key: string; label: string;
+  leads: number; called: number; touched: number;
+  notTouched: number; notCalled: number; noData: number;
+}
+export function callingFunnel(k: CohortKey, where = ""): FunnelSeg[] {
+  const t = COHORTS[k].table, paid = COHORTS[k].paidCol;
+  const seg: [string, string, string][] = [
+    ["all", "All leads", "1=1"],
+    ["unreg", "Not registered", `${paid} <> 'paid'`],
+    ["reg", "Registered", `${paid} = 'paid'`],
+  ];
+  return seg.map(([key, label, cond]) => {
+    const c = (extra: string) => q(`SELECT COUNT(*) n FROM ${t} WHERE ${cond}${extra}${where}`);
+    return {
+      key, label,
+      leads: c(""),
+      called: c(" AND total_calls > 0"),
+      touched: c(" AND connected_calls > 0"),
+      notTouched: c(" AND total_calls > 0 AND connected_calls = 0"),
+      notCalled: c(" AND total_calls = 0"),
+      noData: c(" AND total_calls IS NULL"),
+    };
+  });
+}
+
+// CSAT-1: the same funnel per program.
+export function callingFunnelByProgram(k: CohortKey, where = ""): (FunnelSeg & { program: string })[] {
+  const meta = COHORTS[k];
+  if (!meta.programCol) return [];
+  const progs = rows<{ p: string }>(
+    `SELECT DISTINCT coalesce(nullif(${meta.programCol},''),'(no program)') p
+       FROM ${meta.table} WHERE 1=1${where}`
+  ).map((r) => String(r.p));
+  return progs
+    .map((pg) => {
+      const cond = pg === "(no program)"
+        ? ` AND nullif(${meta.programCol},'') IS NULL`
+        : ` AND ${meta.programCol} = '${pg.replace(/'/g, "''")}'`;
+      const f = callingFunnel(k, where + cond)[0];
+      return { ...f, program: pg, key: `p_${pg}`, label: pg };
+    })
+    .filter((r) => r.leads > 0)
+    .sort((a, b) => b.leads - a.leads);
+}
+
+// Leads created per day (first_signup). Works for EVERY cohort, unlike the
+// paid_at trend which only exists on the NSAT maps.
+export interface ActivityDay { day: string; leads: number; registrations: number }
+export function activityByDay(k: CohortKey, where = ""): ActivityDay[] {
+  const t = COHORTS[k].table, paid = COHORTS[k].paidCol;
+  return rows<ActivityDay>(
+    `SELECT date(first_signup) day, COUNT(*) leads,
+            SUM(CASE WHEN ${paid}='paid' THEN 1 ELSE 0 END) registrations
+       FROM ${t} WHERE first_signup IS NOT NULL${where} GROUP BY 1 ORDER BY 1`
+  ).map((r) => ({ day: String(r.day), leads: Number(r.leads), registrations: Number(r.registrations) }));
 }
 
 // Registrations over time uses paid_at (when they actually paid), not signup.
@@ -207,7 +286,7 @@ export function registrationsByDay(k: CohortKey): DayRow[] {
   if (!meta.hasPaidAt) return [];
   return rows<DayRow>(
     `SELECT date(paid_at) day, COUNT(*) n FROM ${meta.table}
-      WHERE registered='paid' AND paid_at IS NOT NULL GROUP BY 1 ORDER BY 1`
+      WHERE ${meta.paidCol}='paid' AND paid_at IS NOT NULL GROUP BY 1 ORDER BY 1`
   ).map((r) => ({ day: String(r.day), n: Number(r.n) }));
 }
 
@@ -220,7 +299,7 @@ export function byCounsellor(k: CohortKey, limit = 12): CounsellorRow[] {
             COUNT(*) leads,
             SUM(CASE WHEN total_calls > 0 THEN 1 ELSE 0 END) called,
             SUM(CASE WHEN connected_calls > 0 THEN 1 ELSE 0 END) connected,
-            SUM(CASE WHEN registered='paid' THEN 1 ELSE 0 END) registrations
+            SUM(CASE WHEN ${COHORTS[k].paidCol}='paid' THEN 1 ELSE 0 END) registrations
        FROM ${t} GROUP BY 1 ORDER BY leads DESC LIMIT ${limit}`
   ).map((r) => ({ ...r, leads: Number(r.leads) }));
 }

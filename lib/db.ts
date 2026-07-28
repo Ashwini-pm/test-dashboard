@@ -464,6 +464,7 @@ function overlayNsat4Csat(pulls: CsatPull): void {
     db.prepare("DELETE FROM csat_map").run();
     for (const { table, rows } of pulls) {
       if (table === "nsat3_lead_map") {
+        mirrorRaw("cohort_nsat3", rows);
         for (const r of rows) insMap.run(String(r.lead_id ?? ""), r.reg_status ?? null, r.campaign_source ?? null, r.origin ?? null, r.crm_source_category ?? null, r.total_calls ?? null, r.connected_calls ?? null, r.first_signup ?? null, r.first_call_at ?? null, r.last_call_at ?? null, r.counsellor ?? null, r.name ?? null, r.phone ?? null, r.utm_campaign ?? null);
         continue;
       }

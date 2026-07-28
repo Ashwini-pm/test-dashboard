@@ -1426,3 +1426,26 @@ table.list tbody tr:hover td {
 .co-caveat ul { margin: 6px 0 0; padding-left: 18px; }
 .co-caveat li { font-size: 12.5px; color: var(--text-muted); line-height: 1.7; margin-bottom: 8px; }
 .co-caveat code { background: var(--surface-muted); padding: 1px 5px; border-radius: 5px; font-size: 11.5px; }
+
+/* ---- Calling funnel (Overview) ---- */
+.kf-top { display: flex; gap: 32px; flex-wrap: wrap; margin-bottom: 16px; }
+.kf-fig { min-width: 130px; }
+.kf-n { font-size: 28px; font-weight: 700; color: var(--text-title); line-height: 1.1; }
+.kf-l { font-size: 12.5px; color: var(--text-muted); margin-top: 3px; }
+.kf-dim { color: var(--text-faint); }
+.kf-steps { display: flex; align-items: center; gap: 18px; flex-wrap: wrap; margin-bottom: 14px; }
+.kf-step { min-width: 96px; }
+.kf-sl { font-size: 11.5px; color: var(--text-faint); }
+.kf-sv { font-size: 20px; font-weight: 700; color: var(--text-title); line-height: 1.2; }
+.kf-sp { font-size: 11px; color: var(--text-faint); }
+.kf-arrow { color: var(--divider); font-size: 15px; }
+.kf-bar { display: flex; height: 26px; border-radius: 6px; overflow: hidden; background: var(--surface-muted); }
+.kf-seg { min-width: 2px; }
+.kf-seg + .kf-seg { margin-left: 2px; }
+.kf-touched { background: #1baf7a; } .kf-nottouched { background: #eda100; }
+.kf-notcalled { background: #c0392b; } .kf-nodata { background: #898781; }
+.kf-legend { display: flex; flex-wrap: wrap; gap: 8px 18px; margin-top: 9px; font-size: 11.5px; color: var(--text-muted); }
+.kf-legend span { display: inline-flex; align-items: center; gap: 6px; }
+.kf-legend i { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
+.kf-daybar { width: 26px; background: #9ec5f4; border-radius: 4px 4px 0 0; min-height: 2px; display: flex; align-items: flex-end; }
+.kf-dayreg { width: 100%; background: #2a78d6; border-radius: 0 0 0 0; }
