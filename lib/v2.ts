@@ -365,7 +365,10 @@ export function preTestTable(ctx: Ctx, round?: string | null): FunnelCallRow[] {
 
   // The Combined page offers BBA and BCA together, so the signup carries no
   // program. Bifurcate it by the program the CRM assigned instead.
-  if (m.table === "csat_map" && (round === "Combined" || round === "All")) {
+  // Combined ONLY. That page sells BBA and BCA together, so the split is the
+  // whole point there. On the BBA/BCA tabs every row is already that program,
+  // and on All the split just repeats the by-program card.
+  if (m.table === "csat_map" && round === "Combined") {
     let progs: string[] = [];
     try {
       progs = (db.prepare(
