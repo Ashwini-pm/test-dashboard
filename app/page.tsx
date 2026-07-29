@@ -44,9 +44,11 @@ export default async function Overview({ searchParams }: { searchParams: Promise
   const postTest = hasCoverage ? postTestTable(ctx, round) : [];
   const maxCount = Math.max(1, ...f.rows.filter((r) => r.count !== null).map((r) => r.count as number));
   // The four numbers the CBO tracks — same funnel everywhere, that's the point.
+  // NSAT-4's feed records passes only, so calling it "Test given" would overstate.
+  const passOnly = ctx === "NSAT" && round === "NSAT-4";
   const kpis: [string, number][] = [
     ["Leads", s.leads],
-    ["Test given", s.appeared],
+    [passOnly ? "Test passed" : "Test given", s.appeared],
     ["Counselled", s.held],
     ["Seat booked", s.seats],
   ];

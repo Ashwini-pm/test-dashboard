@@ -83,6 +83,12 @@ export function stageCounts(ctx: Ctx, round?: string | null): StageCounts {
   // CSAT Lead + Registration come from the lead_map reconciliation (csat_map),
   // not the raw base tables. Downstream stages stay 0 for CSAT (no such data).
   const mu = mapUniverse(ctx, round);
+  // NSAT-4 keeps its test outcome, offer letter and seat on the map itself; the
+  // base test_results / offer_letters / payments tables have no NSAT-4 rows, so
+  // reading them here left every KPI after Leads at zero.
+  const n4 = mu?.table === "nsat4_map";
+  const fromN4 = (where: string) => q(`SELECT COUNT(*) n FROM nsat4_map WHERE ${where}`);
+  const n4Pass = n4 ? fromN4("test_result = 'Pass'") : 0;
   return {
     leads: mu
       ? q(`SELECT COUNT(*) n FROM ${mu.table} WHERE 1=1${mu.where}`)
@@ -90,13 +96,15 @@ export function stageCounts(ctx: Ctx, round?: string | null): StageCounts {
     paid: mu
       ? q(`SELECT COUNT(*) n FROM ${mu.table} WHERE registered='paid'${mu.where}`)
       : q(`SELECT COUNT(DISTINCT lead_id) n FROM registrations WHERE nsat_round IN (${inc})`),
-    appeared: q(jl("test_results", " AND x.appeared=1")),
-    pass: q(jl("test_results", " AND x.result='pass'")),
-    fail: q(jl("test_results", " AND x.result='fail'")),
+    // only 'Pass' is ever recorded, so appeared == pass and fail stays 0 rather
+    // than being inferred from an absence
+    appeared: n4 ? n4Pass : q(jl("test_results", " AND x.appeared=1")),
+    pass: n4 ? n4Pass : q(jl("test_results", " AND x.result='pass'")),
+    fail: n4 ? 0 : q(jl("test_results", " AND x.result='fail'")),
     slotBooked: q(jl("counselling_sessions", " AND x.scheduled_at IS NOT NULL")),
     held: q(jl("counselling_sessions", " AND x.status='held'")),
-    offers: q(jl("offer_letters", COH)),
-    seats: q(jl("payments", " AND x.paid_at >= '2026-07-16'" + COH)),
+    offers: n4 ? fromN4("nullif(offer_letter,'') IS NOT NULL") : q(jl("offer_letters", COH)),
+    seats: n4 ? fromN4("seat_booked = 'Yes'") : q(jl("payments", " AND x.paid_at >= '2026-07-16'" + COH)),
   };
 }
 
