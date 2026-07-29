@@ -108,7 +108,9 @@ export function stageCounts(ctx: Ctx, round?: string | null): StageCounts {
       : q(jl("counselling_sessions", " AND x.scheduled_at IS NOT NULL")),
     held: n4 ? 0 : q(jl("counselling_sessions", " AND x.status='held'")),
     offers: n4 ? fromN4("nullif(offer_letter,'') IS NOT NULL") : q(jl("offer_letters", COH)),
-    seats: n4 ? fromN4("seat_booked = 'Yes'") : q(jl("payments", " AND x.paid_at >= '2026-07-16'" + COH)),
+    seats: n4
+      ? q("SELECT COUNT(DISTINCT lead_id) n FROM nsat4_sb")
+      : q(jl("payments", " AND x.paid_at >= '2026-07-16'" + COH)),
   };
 }
 
@@ -428,7 +430,8 @@ export function postTestTable(ctx: Ctx, round?: string | null): FunnelCallRow[] 
       // slot booked = has a booking_id in nsat4_counselling (mirrored to nsat4_slots)
       ["slot", "Slot booked", " AND m.lead_id IN (SELECT lead_id FROM nsat4_slots)"],
       ["ol", "Offer letter", " AND nullif(m.offer_letter,'') IS NOT NULL"],
-      ["seat", "Seat booked", " AND m.seat_booked = 'Yes'"],
+      // seats from the sheet (nsat4_sb), not the window-limited CRM dump
+      ["seat", "Seat booked", " AND m.lead_id IN (SELECT lead_id FROM nsat4_sb)"],
     ];
     for (const [key, label, scope] of defs) {
       const cols = callCols(m, scope);
@@ -595,7 +598,7 @@ export function drill(ctx: Ctx, round: string | null | undefined, p: DrillParams
     if (p.pstage === "pass") { w.push("m.test_result = 'Pass'"); bits.push("test passed"); }
     if (p.pstage === "slot") { w.push("m.lead_id IN (SELECT lead_id FROM nsat4_slots)"); bits.push("counselling slot booked"); }
     if (p.pstage === "ol")   { w.push("nullif(m.offer_letter,'') IS NOT NULL"); bits.push("offer letter"); }
-    if (p.pstage === "seat") { w.push("m.seat_booked = 'Yes'"); bits.push("seat booked"); }
+    if (p.pstage === "seat") { w.push("m.lead_id IN (SELECT lead_id FROM nsat4_sb)"); bits.push("seat booked"); }
   } else if (p.pstage) {
     const inc2 = inClause(ctx, round);
     const S: Record<string, [string, string]> = {
