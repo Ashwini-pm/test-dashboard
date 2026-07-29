@@ -101,8 +101,12 @@ export function stageCounts(ctx: Ctx, round?: string | null): StageCounts {
     appeared: n4 ? n4Pass : q(jl("test_results", " AND x.appeared=1")),
     pass: n4 ? n4Pass : q(jl("test_results", " AND x.result='pass'")),
     fail: n4 ? 0 : q(jl("test_results", " AND x.result='fail'")),
-    slotBooked: q(jl("counselling_sessions", " AND x.scheduled_at IS NOT NULL")),
-    held: q(jl("counselling_sessions", " AND x.status='held'")),
+    // NSAT-4 slots come from nsat4_counselling; it has no attendance column, so
+    // held stays 0 instead of being inferred from the booking.
+    slotBooked: n4
+      ? q("SELECT COUNT(DISTINCT lead_id) n FROM nsat4_slots WHERE lead_id IN (SELECT lead_id FROM nsat4_map)")
+      : q(jl("counselling_sessions", " AND x.scheduled_at IS NOT NULL")),
+    held: n4 ? 0 : q(jl("counselling_sessions", " AND x.status='held'")),
     offers: n4 ? fromN4("nullif(offer_letter,'') IS NOT NULL") : q(jl("offer_letters", COH)),
     seats: n4 ? fromN4("seat_booked = 'Yes'") : q(jl("payments", " AND x.paid_at >= '2026-07-16'" + COH)),
   };
@@ -176,7 +180,10 @@ export function sourceStages(ctx: Ctx, round?: string | null): SourceStage[] {
     // NSAT-4/5 carry the test outcome on the map itself, so read it from there
     // instead of the (empty) base stage tables.
     ...(m.table === "nsat4_map"
-      ? ([["result", "Test passed", fromMap(" AND m.test_result = 'Pass'")]] as [string, string, string][])
+      ? ([
+          ["result", "Test passed", fromMap(" AND m.test_result = 'Pass'")],
+          ["slotb", "Slot booked", fromMap(" AND m.lead_id IN (SELECT lead_id FROM nsat4_slots)")],
+        ] as [string, string, string][])
       : []),
     ["test", "Test", viaStage("test_results", " AND x.appeared=1")],
     ["result", "Result: Pass", viaStage("test_results", " AND x.result='pass'")],
@@ -418,6 +425,8 @@ export function postTestTable(ctx: Ctx, round?: string | null): FunnelCallRow[] 
     // failed — so this row is a pass count, labelled as such.
     const defs: [string, string, string][] = [
       ["pass", "Test passed", " AND m.test_result = 'Pass'"],
+      // slot booked = has a booking_id in nsat4_counselling (mirrored to nsat4_slots)
+      ["slot", "Slot booked", " AND m.lead_id IN (SELECT lead_id FROM nsat4_slots)"],
       ["ol", "Offer letter", " AND nullif(m.offer_letter,'') IS NOT NULL"],
       ["seat", "Seat booked", " AND m.seat_booked = 'Yes'"],
     ];
@@ -584,6 +593,7 @@ export function drill(ctx: Ctx, round: string | null | undefined, p: DrillParams
   // post-test stages live in the stage tables, not the map: match via leads.
   if (p.pstage && m.table === "nsat4_map") {
     if (p.pstage === "pass") { w.push("m.test_result = 'Pass'"); bits.push("test passed"); }
+    if (p.pstage === "slot") { w.push("m.lead_id IN (SELECT lead_id FROM nsat4_slots)"); bits.push("counselling slot booked"); }
     if (p.pstage === "ol")   { w.push("nullif(m.offer_letter,'') IS NOT NULL"); bits.push("offer letter"); }
     if (p.pstage === "seat") { w.push("m.seat_booked = 'Yes'"); bits.push("seat booked"); }
   } else if (p.pstage) {

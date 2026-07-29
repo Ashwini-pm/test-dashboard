@@ -49,7 +49,9 @@ export default async function Overview({ searchParams }: { searchParams: Promise
   const kpis: [string, number][] = [
     ["Leads", s.leads],
     [passOnly ? "Test passed" : "Test given", s.appeared],
-    ["Counselled", s.held],
+    // NSAT-4's counselling sheet records the booking, not the attendance, so a
+    // "Counselled" card could only ever read 0. Show the number that exists.
+    passOnly ? ["Slot booked", s.slotBooked] : ["Counselled", s.held],
     ["Seat booked", s.seats],
   ];
 
@@ -92,6 +94,7 @@ export default async function Overview({ searchParams }: { searchParams: Promise
         <div className="card">
           <header><h3>Conversion Funnel</h3><span className="cap">full funnel · {round}</span></header>
           <FunnelView rows={f.rows} maxCount={maxCount} />
+          {f.caveat && <p className="cv-caveat">{f.caveat}</p>}
         </div>
       </section>
 

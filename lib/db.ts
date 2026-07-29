@@ -220,6 +220,7 @@ function buildMapIndexes(): void {
   run("CREATE INDEX IF NOT EXISTS ix_csatmap_lead ON csat_map(lead_id)");
   run("CREATE INDEX IF NOT EXISTS ix_csatmap_tag ON csat_map(round_tag)");
   run("CREATE INDEX IF NOT EXISTS ix_n4map_lead ON nsat4_map(lead_id)");
+  run("CREATE INDEX IF NOT EXISTS ix_n4slot_lead ON nsat4_slots(lead_id)");
   run("CREATE INDEX IF NOT EXISTS ix_leads_student ON leads(student_id)");
   // Stage tables carry no lead_id index in schema.sql, yet /students runs a
   // correlated subquery per lead against every one of them.
@@ -438,7 +439,9 @@ async function fetchCsatProject(): Promise<CsatPull | null> {
     return chunks.flat();
   };
   return Promise.all(
-    ["nsat4", "bba", "bca", "combined", "nsat3_lead_map", "lead_map", "nsat4_lead_map", "nsat5_lead_map"].map(async (t) => ({ table: t, rows: await pull(t) }))
+    // nsat4_counselling is pulled for its slot fields only. nsat4_lead_map stays
+    // the NSAT-4 lead universe and the authority on offer letter / seat booked.
+    ["nsat4", "bba", "bca", "combined", "nsat3_lead_map", "lead_map", "nsat4_lead_map", "nsat5_lead_map", "nsat4_counselling"].map(async (t) => ({ table: t, rows: await pull(t) }))
   );
 }
 
@@ -467,6 +470,12 @@ function overlayNsat4Csat(pulls: CsatPull): void {
   db.exec("DROP TABLE IF EXISTS nsat4_map");
   db.exec("CREATE TABLE nsat4_map (lead_id TEXT, registered TEXT, campaign_source TEXT, origin TEXT, crm_source_category TEXT, total_calls INTEGER, connected_calls INTEGER, first_signup TEXT, first_call_at TEXT, last_call_at TEXT, counsellor TEXT, name TEXT, phone TEXT, utm_campaign TEXT, offer_letter TEXT, seat_booked TEXT, test_result TEXT, test_creds_shared TEXT)");
   const insN4 = db.prepare("INSERT INTO nsat4_map(lead_id,registered,campaign_source,origin,crm_source_category,total_calls,connected_calls,first_signup,first_call_at,last_call_at,counsellor,name,phone,utm_campaign,offer_letter,seat_booked,test_result,test_creds_shared) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)");
+  // Counselling slots for NSAT-4. Booking exists when booking_id is set; there is
+  // no attendance/outcome column in the source, so "counselling done" cannot be
+  // derived — call_date is the scheduled day, which for now is all in the future.
+  db.exec("DROP TABLE IF EXISTS nsat4_slots");
+  db.exec("CREATE TABLE nsat4_slots (lead_id TEXT, booking_id TEXT, call_date TEXT, call_time TEXT, panelist TEXT, meet_link TEXT, conf_sent INTEGER, booked_at TEXT)");
+  const insSlot = db.prepare("INSERT INTO nsat4_slots(lead_id,booking_id,call_date,call_time,panelist,meet_link,conf_sent,booked_at) VALUES (?,?,?,?,?,?,?,?)");
   db.exec("DROP TABLE IF EXISTS csat_map");
   db.exec("CREATE TABLE csat_map (lead_id TEXT, round_tag TEXT, registered TEXT, campaign_source TEXT, origin TEXT, crm_source_category TEXT, total_calls INTEGER, connected_calls INTEGER, first_signup TEXT, first_call_at TEXT, last_call_at TEXT, counsellor TEXT, name TEXT, phone TEXT, utm_campaign TEXT, crm_program TEXT, signup_programs TEXT)");
   const insCsat = db.prepare("INSERT INTO csat_map(lead_id,round_tag,registered,campaign_source,origin,crm_source_category,total_calls,connected_calls,first_signup,first_call_at,last_call_at,counsellor,name,phone,utm_campaign,crm_program,signup_programs) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)");
@@ -479,6 +488,16 @@ function overlayNsat4Csat(pulls: CsatPull): void {
       if (table === "nsat3_lead_map") {
         mirrorRaw("cohort_nsat3", rows);
         for (const r of rows) insMap.run(String(r.lead_id ?? ""), r.reg_status ?? null, r.campaign_source ?? null, r.origin ?? null, r.crm_source_category ?? null, r.total_calls ?? null, r.connected_calls ?? null, r.first_signup ?? null, r.first_call_at ?? null, r.last_call_at ?? null, r.counsellor ?? null, r.name ?? null, r.phone ?? null, r.utm_campaign ?? null);
+        continue;
+      }
+      if (table === "nsat4_counselling") {
+        // slot rows only — everything else in this table duplicates nsat4_lead_map
+        for (const r of rows) {
+          if (!r.booking_id) continue;
+          insSlot.run(
+            String(r.lead_id ?? ""), String(r.booking_id ?? ""), r.call_date ?? null, r.call_time ?? null,
+            r.panelist ?? null, r.meet_link ?? null, r.slot_confirmation_sent ? 1 : 0, r.booked_at ?? null);
+        }
         continue;
       }
       if (table === "nsat5_lead_map") {

@@ -505,14 +505,16 @@ export function alerts(round: Round): AlertCard[] {
   );
 }
 
-export function funnel(round: Round, src?: Src): { base: number; rows: FunnelRow[] } {
+export interface FunnelResult { base: number; rows: FunnelRow[]; caveat?: string }
+
+export function funnel(round: Round, src?: Src): FunnelResult {
   // NSAT-4 and CSAT use the same real-stage funnel layout as NSAT-3; only
   // NSAT-2/Combined keep the legacy canonical-stages view.
   if (round === "NSAT-3" || round === "NSAT-4" || round === "NSAT-5" || round.startsWith("CSAT")) return funnelN3(round, src);
   return funnelN2(round);
 }
 
-function funnelN2(round: Round): { base: number; rows: FunnelRow[] } {
+function funnelN2(round: Round): FunnelResult {
   const inc = inClause(round);
   const leads = int(db.prepare(`SELECT COUNT(*) n FROM leads WHERE nsat_round IN (${inc})`).get() as any);
   const reg = int(
@@ -601,7 +603,7 @@ function funnelN2(round: Round): { base: number; rows: FunnelRow[] } {
   return { base, rows };
 }
 
-function funnelN3(round: Round = "NSAT-3", src?: Src): { base: number; rows: FunnelRow[] } {
+function funnelN3(round: Round = "NSAT-3", src?: Src): FunnelResult {
   const inc = inClause(round);
   const S = srcClause(src);
   const c = (sql: string) => int(db.prepare(sql).get() as any);
@@ -643,12 +645,25 @@ function funnelN3(round: Round = "NSAT-3", src?: Src): { base: number; rows: Fun
     ? n4Pass
     : c(`SELECT COUNT(*) n FROM test_results x ${jl(" AND x.result='pass'")}`);
   const failed = useN4 ? 0 : c(`SELECT COUNT(*) n FROM test_results x ${jl(" AND x.result='fail'")}`);
-  const couns = c(`SELECT COUNT(*) n FROM counselling_sessions x ${jl(" AND x.scheduled_at IS NOT NULL")}`); // slots booked (day tabs)
-  const held = c(`SELECT COUNT(DISTINCT x.lead_id) n FROM counselling_sessions x ${jl(" AND x.status='held'")}`); // counselling actually done
+  // NSAT-4's counselling lives in nsat4_counselling (mirrored to nsat4_slots):
+  // a booking_id means a slot is booked. That table has NO attendance/outcome
+  // column, so "counselling done" is genuinely unknowable — held stays 0 rather
+  // than being faked from the booking. Every NSAT-4 slot is 30 Jul onward, so
+  // nothing has been held yet anyway.
+  const couns = useN4
+    ? c(`SELECT COUNT(DISTINCT lead_id) n FROM nsat4_slots WHERE lead_id IN (SELECT lead_id FROM nsat4_map)`)
+    : c(`SELECT COUNT(*) n FROM counselling_sessions x ${jl(" AND x.scheduled_at IS NOT NULL")}`); // slots booked (day tabs)
+  const held = useN4
+    ? 0
+    : c(`SELECT COUNT(DISTINCT x.lead_id) n FROM counselling_sessions x ${jl(" AND x.status='held'")}`); // counselling actually done
   // NSAT-flow offers only: CRM also holds direct-admission offers (never tested)
-  const offers = c(`SELECT COUNT(*) n FROM offer_letters x ${jl(" AND x.lead_id IN (SELECT lead_id FROM counselling_sessions WHERE status IN ('held','no_show','reschedule'))")}`);
+  const offers = useN4
+    ? c(`SELECT COUNT(*) n FROM nsat4_map WHERE nullif(offer_letter,'') IS NOT NULL`)
+    : c(`SELECT COUNT(*) n FROM offer_letters x ${jl(" AND x.lead_id IN (SELECT lead_id FROM counselling_sessions WHERE status IN ('held','no_show','reschedule'))")}`);
   // Seat = counselled (held) students who booked; pre-booked re-testers live on the Test card
-  const seats = c(`SELECT COUNT(*) n FROM payments x ${jl(" AND x.paid_at >= '2026-07-16' AND x.lead_id IN (SELECT lead_id FROM counselling_sessions WHERE status IN ('held','no_show','reschedule'))")}`);
+  const seats = useN4
+    ? c(`SELECT COUNT(*) n FROM nsat4_map WHERE seat_booked='Yes'`)
+    : c(`SELECT COUNT(*) n FROM payments x ${jl(" AND x.paid_at >= '2026-07-16' AND x.lead_id IN (SELECT lead_id FROM counselling_sessions WHERE status IN ('held','no_show','reschedule'))")}`);
   // AI before-test calling (context sub-block)
   const called = c(`SELECT COUNT(DISTINCT lead_id) n FROM call_logs WHERE nsat_round IN (${inc})`);
   const connected = c(`SELECT COUNT(DISTINCT lead_id) n FROM call_logs WHERE nsat_round IN (${inc}) AND answered=1`);
@@ -766,18 +781,49 @@ function funnelN3(round: Round = "NSAT-3", src?: Src): { base: number; rows: Fun
     const MON = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
     // Day numbering derived from the actual booked dates (Day 1 = earliest), nothing hardcoded
     const days = db.prepare(
-      `SELECT substr(x.scheduled_at,1,10) d, COUNT(*) n, SUM(CASE WHEN x.rep_id IS NOT NULL AND x.rep_id<>'' THEN 1 ELSE 0 END) wp FROM counselling_sessions x JOIN leads l ON l.lead_id=x.lead_id WHERE l.nsat_round IN (${inc}) AND x.scheduled_at IS NOT NULL GROUP BY d ORDER BY d`
+      useN4
+        ? `SELECT call_date d, COUNT(*) n, SUM(CASE WHEN panelist IS NOT NULL AND panelist<>'' THEN 1 ELSE 0 END) wp FROM nsat4_slots WHERE call_date IS NOT NULL AND lead_id IN (SELECT lead_id FROM nsat4_map) GROUP BY d ORDER BY d`
+        : `SELECT substr(x.scheduled_at,1,10) d, COUNT(*) n, SUM(CASE WHEN x.rep_id IS NOT NULL AND x.rep_id<>'' THEN 1 ELSE 0 END) wp FROM counselling_sessions x JOIN leads l ON l.lead_id=x.lead_id WHERE l.nsat_round IN (${inc}) AND x.scheduled_at IS NOT NULL GROUP BY d ORDER BY d`
     ).all() as any[];
     days.forEach((row, idx) => {
       const p = String(row.d).split("-");
       const wp = Number(row.wp || 0);
-      rows.push({ key: "slot_day_" + row.d, label: `Day ${idx + 1} · ${+p[2]} ${MON[(+p[1]) - 1]} ${p[0]}`, count: row.n, pct: pb(row.n), drop: null, detail: true, note: `${wp} with panelist · ${row.n - wp} not booked` });
+      rows.push({ key: "slot_day_" + row.d, label: `Day ${idx + 1} · ${+p[2]} ${MON[(+p[1]) - 1]} ${p[0]}`, count: row.n, pct: pb(row.n), drop: null, detail: true, note: `${wp} with panelist · ${row.n - wp} panelist not assigned yet` });
     });
   }
-  main("counselling", "Counselling", held, "counselling not started yet");
+  // First scheduled NSAT-4 session, straight from the data — nothing hardcoded.
+  const firstSlot = useN4
+    ? (db.prepare("SELECT min(call_date) d FROM nsat4_slots WHERE call_date IS NOT NULL AND lead_id IN (SELECT lead_id FROM nsat4_map)").get() as any)?.d ?? null
+    : null;
+  main(
+    "counselling",
+    "Counselling done",
+    held,
+    useN4 && firstSlot
+      ? `no session held yet · first one is ${firstSlot}`
+      : "counselling not started yet"
+  );
   main("offer_letter", "Offer Letter", offers, "no offer feed yet");
   main("seat_payment", "Seat Payment", seats, "no seat-payment feed yet");
-  return { base, rows };
+  // Flag the break in the chain: for NSAT-4 the offers and seats did not come
+  // through this test-and-counselling path, so the drop percentages below Test
+  // passed are not a progression.
+  let caveat: string | undefined;
+  if (useN4) {
+    const offSlot = c(
+      `SELECT COUNT(*) n FROM nsat4_map WHERE (nullif(offer_letter,'') IS NOT NULL OR seat_booked='Yes')
+         AND lead_id NOT IN (SELECT lead_id FROM nsat4_slots)
+         AND coalesce(test_result,'') <> 'Pass'`
+    );
+    if (offSlot > 0) {
+      caveat =
+        `${offSlot} of the offer letters / seat bookings did not pass the NSAT-4 test and never booked a ` +
+        `counselling slot — they were issued before slot booking opened, outside this path. So the funnel below ` +
+        `Test passed is not a strict subset chain, and those drop percentages should not be read as a progression. ` +
+        `Counselling done cannot be measured at all: the counselling sheet records the booking, not the attendance.`;
+    }
+  }
+  return { base, rows, caveat };
 }
 
 // ---------------------------------------------------------------------------
