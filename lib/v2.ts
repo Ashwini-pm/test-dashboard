@@ -165,6 +165,11 @@ export function sourceStages(ctx: Ctx, round?: string | null): SourceStage[] {
   const defs: [string, string, string][] = [
     ["lead", "Lead", fromMap("")],
     ["registration", "Registration", fromMap(` AND m.${paidCol}='paid'`)],
+    // NSAT-4/5 carry the test outcome on the map itself, so read it from there
+    // instead of the (empty) base stage tables.
+    ...(m.table === "nsat4_map"
+      ? ([["result", "Test passed", fromMap(" AND m.test_result = 'Pass'")]] as [string, string, string][])
+      : []),
     ["test", "Test", viaStage("test_results", " AND x.appeared=1")],
     ["result", "Result: Pass", viaStage("test_results", " AND x.result='pass'")],
     ["slot_form", "Slot Form", viaStage("counselling_sessions", " AND x.scheduled_at IS NOT NULL")],
@@ -401,7 +406,10 @@ export function postTestTable(ctx: Ctx, round?: string | null): FunnelCallRow[] 
   // NSAT-4: offer_letter / seat_booked are columns on the map itself.
   if (m.table === "nsat4_map") {
     const out: FunnelCallRow[] = [];
+    // test_result only ever carries 'Pass' — we know who cleared, not who sat and
+    // failed — so this row is a pass count, labelled as such.
     const defs: [string, string, string][] = [
+      ["pass", "Test passed", " AND m.test_result = 'Pass'"],
       ["ol", "Offer letter", " AND nullif(m.offer_letter,'') IS NOT NULL"],
       ["seat", "Seat booked", " AND m.seat_booked = 'Yes'"],
     ];
@@ -567,6 +575,7 @@ export function drill(ctx: Ctx, round: string | null | undefined, p: DrillParams
   }
   // post-test stages live in the stage tables, not the map: match via leads.
   if (p.pstage && m.table === "nsat4_map") {
+    if (p.pstage === "pass") { w.push("m.test_result = 'Pass'"); bits.push("test passed"); }
     if (p.pstage === "ol")   { w.push("nullif(m.offer_letter,'') IS NOT NULL"); bits.push("offer letter"); }
     if (p.pstage === "seat") { w.push("m.seat_booked = 'Yes'"); bits.push("seat booked"); }
   } else if (p.pstage) {
