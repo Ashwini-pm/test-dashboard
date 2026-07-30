@@ -661,11 +661,12 @@ function funnelN3(round: Round = "NSAT-3", src?: Src): FunnelResult {
     ? c(`SELECT COUNT(*) n FROM nsat4_map WHERE nullif(offer_letter,'') IS NOT NULL`)
     : c(`SELECT COUNT(*) n FROM offer_letters x ${jl(" AND x.lead_id IN (SELECT lead_id FROM counselling_sessions WHERE status IN ('held','no_show','reschedule'))")}`);
   // Seat = counselled (held) students who booked; pre-booked re-testers live on the Test card
-  // Seats for NSAT-4 come from the sheet's SB Date (nsat4_sb), which knows about
-  // bookings crm_leads_6778 cannot see. Counted flat, as agreed: 15 of the 25
-  // booked before this round ran, and that is called out in the caveat below.
+  // Seats read the map's own seat_booked column. Note the map's seat data is
+  // sourced from the NSAT sheet's SB Date, not crm_leads_6778: that Redash dump
+  // filters lead_created >= 14 Jul and so misses bookings by students whose CRM
+  // lead predates the round.
   const seats = useN4
-    ? c(`SELECT COUNT(DISTINCT lead_id) n FROM nsat4_sb`)
+    ? c(`SELECT COUNT(*) n FROM nsat4_map WHERE seat_booked='Yes'`)
     : c(`SELECT COUNT(*) n FROM payments x ${jl(" AND x.paid_at >= '2026-07-16' AND x.lead_id IN (SELECT lead_id FROM counselling_sessions WHERE status IN ('held','no_show','reschedule'))")}`);
   // AI before-test calling (context sub-block)
   const called = c(`SELECT COUNT(DISTINCT lead_id) n FROM call_logs WHERE nsat_round IN (${inc})`);
@@ -807,7 +808,9 @@ function funnelN3(round: Round = "NSAT-3", src?: Src): FunnelResult {
       : "counselling not started yet"
   );
   main("offer_letter", "Offer Letter", offers, "no offer feed yet");
-  const sbRecent = useN4 ? c(`SELECT COUNT(*) n FROM nsat4_sb WHERE sb_date >= '2026-07-14'`) : 0;
+  const sbRecent = useN4
+    ? c(`SELECT COUNT(*) n FROM nsat4_map WHERE seat_booked='Yes' AND seat_booked_date >= '2026-07-14'`)
+    : 0;
   main(
     "seat_payment",
     "Seat Payment",
@@ -829,13 +832,13 @@ function funnelN3(round: Round = "NSAT-3", src?: Src): FunnelResult {
     );
     const sbOld = seats - sbRecent;
     caveat =
-      `Seat Payment counts the NSAT sheet's SB Date column (${seats} students), not the CRM dump — that Redash ` +
-      `query only returns leads created from 14 Jul, so it sees just 5 of them. Of the ${seats}, ${sbRecent} booked ` +
-      `during this round and ${sbOld} had already booked a seat earlier (some as far back as 2022), so the round did ` +
-      `not produce all ${seats}. None of them passed the NSAT-4 test or booked a counselling slot, and Offer Letter ` +
-      `still comes from the CRM (${offers}) because the sheet has no offer-letter column. Counselling done cannot be ` +
-      `measured at all: the counselling sheet records the booking, not the attendance. Treat everything below Test ` +
-      `passed as separate counts, not a conversion chain.`;
+      `Seat Payment reads seat_booked on the lead map, populated from the NSAT sheet's SB Date because the CRM dump ` +
+      `only returns leads created from 14 Jul and so sees just 5 of them. Of the ${seats}, ${sbRecent} booked during ` +
+      `this round and ${sbOld} had already booked a seat earlier (some as far back as 2022), so the round did not ` +
+      `produce all ${seats}. None of them passed the NSAT-4 test or booked a counselling slot, and Offer Letter comes ` +
+      `from the CRM (${offers}), which undercounts for the same window reason. Counselling done cannot be measured at ` +
+      `all: the counselling sheet records the booking, not the attendance. Treat everything below Test passed as ` +
+      `separate counts, not a conversion chain.`;
     void offSlot;
   }
   return { base, rows, caveat };
