@@ -1470,3 +1470,45 @@ table.list tbody tr:hover td {
 .dh-pager .chip.on { background: var(--primary); color: #fff; border-color: var(--primary); }
 .dh-pager .chip.off { opacity: .4; pointer-events: none; }
 .dh-gap { color: var(--text-faint); padding: 0 2px; }
+
+/* ---- AI vs human calling (Communication) ---------------------------------- */
+.cs-top {
+  display: grid;
+  grid-template-columns: minmax(0, 340px) minmax(0, 1fr);
+  gap: 18px;
+  align-items: center;
+  margin-bottom: 16px;
+}
+@media (max-width: 780px) { .cs-top { grid-template-columns: minmax(0, 1fr); } }
+.cs-venn svg { width: 100%; height: auto; max-width: 340px; overflow: visible; }
+.cs-c-ai { fill: var(--blue); fill-opacity: .5; stroke: var(--blue); stroke-width: 1.5; }
+.cs-c-hu { fill: var(--green); fill-opacity: .5; stroke: var(--green); stroke-width: 1.5; }
+.cs-vlab {
+  font: 600 12px/1 var(--font-sans, inherit);
+  fill: var(--ink); text-anchor: middle; paint-order: stroke;
+  stroke: var(--card); stroke-width: 3px;
+}
+.cs-vboth { font-weight: 700; }
+.cs-vkey { display: flex; flex-wrap: wrap; gap: 4px 14px; margin-top: 6px; font-size: 11.5px; color: var(--muted); }
+.cs-vkey span { display: inline-flex; align-items: center; gap: 5px; }
+.cs-vkey i { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
+.cs-sw-ai   { background: var(--blue); opacity: .65; }
+.cs-sw-hu   { background: var(--green); opacity: .65; }
+.cs-sw-both { background: linear-gradient(90deg, var(--blue), var(--green)); }
+.cs-figs { display: flex; flex-wrap: wrap; gap: 22px; }
+.cs-fig { min-width: 0; }
+.cs-n { font-size: 30px; font-weight: 700; line-height: 1.1; }
+.cs-fig-bad .cs-n { color: var(--dead); }
+.cs-l { font-size: 12px; color: var(--muted); margin-top: 2px; }
+.cs-dim { opacity: .7; }
+.cs-table td, .cs-table th { white-space: nowrap; }
+.cs-both { color: var(--ink); font-weight: 600; }
+.cs-ai { color: var(--blue); }
+.cs-hu { color: var(--green); }
+.cs-gap {
+  margin-top: 12px; padding: 10px 12px; border-radius: 8px;
+  background: color-mix(in srgb, var(--dead) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--dead) 22%, transparent);
+  font-size: 12.5px; line-height: 1.5;
+}
+.cs-note { margin-top: 10px; font-size: 11.5px; color: var(--muted); line-height: 1.5; }

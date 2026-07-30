@@ -3,6 +3,8 @@ import { parseCtx, coverage, commsByDay, dispositions, roundOptions, defaultRoun
 import RoundSelect from "@/components/RoundSelect";
 import { cohortForRound, callingFunnel, callingFunnelByProgram, activityByDay, cohortReady, overview as cohortOverview } from "@/lib/cohort";
 import { CallingFunnelBlock } from "@/components/CallingFunnel";
+import { channelSplit, channelCohortForRound } from "@/lib/channels";
+import ChannelSplitBlock from "@/components/ChannelSplit";
 
 export const dynamic = "force-dynamic";
 // cold-start hydrate pulls ~20 tables; the default 10s limit was too tight
@@ -15,6 +17,7 @@ export default async function Comms({ searchParams }: { searchParams: Promise<Re
   await ensureFresh();
   const ctx = parseCtx(sp.ctx);
   const round = sp.round || defaultRound(ctx);
+  const dq = `${ctx === "CSAT" ? "ctx=CSAT&" : ""}round=${round}`;
   const cov = coverage(ctx, round);
   const days = commsByDay(ctx, round);
   const disp = dispositions(ctx, round);
@@ -26,6 +29,10 @@ export default async function Comms({ searchParams }: { searchParams: Promise<Re
   const cOv = cOk && cSel ? cohortOverview(cSel.key, cSel.where) : null;
   const cProg = cOk && cSel && !cSel.where ? callingFunnelByProgram(cSel.key) : [];
   const cDays = cOk && cSel ? activityByDay(cSel.key, cSel.where) : [];
+  // AI vs human calling: separate channels, four exclusive buckets. Only NSAT-4
+  // and CSAT-1 have AI calls resolved onto their leads.
+  const chSel = channelCohortForRound(ctx, round);
+  const ch = chSel ? channelSplit(chSel.cohort, chSel.where, chSel.scope) : null;
 
   return (
     <>
@@ -46,6 +53,14 @@ export default async function Comms({ searchParams }: { searchParams: Promise<Re
           byProgram={cProg}
           days={cDays}
           label={round}
+        />
+      )}
+
+      {ch && (
+        <ChannelSplitBlock
+          split={ch}
+          qs={dq}
+          note="AI calling runs almost entirely to students who have already registered, as a reminder channel, so the unregistered gap above is a human-calling gap. Figures are as of the last sync, not live to the minute."
         />
       )}
 
