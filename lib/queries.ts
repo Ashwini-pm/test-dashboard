@@ -633,18 +633,18 @@ function funnelN3(round: Round = "NSAT-3", src?: Src): FunnelResult {
     : useCsat
     ? c(`SELECT COUNT(*) n FROM csat_map${csatMapWhere(round, true)}`)
     : c(`SELECT COUNT(DISTINCT x.lead_id) n FROM registrations x ${jl("")}`);
-  // NSAT-4 carries the test outcome on its lead map (test_result), and the base
-  // test_results table has no NSAT-4 rows. Only 'Pass' is ever recorded, so we
-  // know who passed but NOT who sat and failed — appeared is therefore the pass
-  // count, and failed stays 0 rather than being invented.
-  const n4Pass = useN4 ? c(`SELECT COUNT(*) n FROM nsat4_map WHERE test_result = 'Pass'`) : 0;
+  // NSAT-4 carries the test outcome on its lead map (test_result); the base
+  // test_results table has no NSAT-4 rows. Both Pass and Fail are recorded now,
+  // so appeared = anyone with a result, and pass/fail are read straight off it.
   const appeared = useN4
-    ? n4Pass
+    ? c(`SELECT COUNT(*) n FROM nsat4_map WHERE nullif(test_result,'') IS NOT NULL`)
     : c(`SELECT COUNT(*) n FROM test_results x ${jl(" AND x.appeared=1")}`);
   const passed = useN4
-    ? n4Pass
+    ? c(`SELECT COUNT(*) n FROM nsat4_map WHERE test_result = 'Pass'`)
     : c(`SELECT COUNT(*) n FROM test_results x ${jl(" AND x.result='pass'")}`);
-  const failed = useN4 ? 0 : c(`SELECT COUNT(*) n FROM test_results x ${jl(" AND x.result='fail'")}`);
+  const failed = useN4
+    ? c(`SELECT COUNT(*) n FROM nsat4_map WHERE test_result = 'Fail'`)
+    : c(`SELECT COUNT(*) n FROM test_results x ${jl(" AND x.result='fail'")}`);
   // NSAT-4's counselling lives in nsat4_counselling (mirrored to nsat4_slots):
   // a booking_id means a slot is booked. That table has NO attendance/outcome
   // column, so "counselling done" is genuinely unknowable — held stays 0 rather
@@ -721,7 +721,7 @@ function funnelN3(round: Round = "NSAT-3", src?: Src): FunnelResult {
   progSplit("lead", "");
   main("registration", "Registration", reg, "no registration feed");
   progSplit("registration", " AND registered='paid'");
-  main("test", useN4 ? "Test passed" : "Test", appeared, "awaiting exam feed");
+  main("test", "Test", appeared, "awaiting exam feed");
   // Detail nested under Test (revealed by the chevron): AI calling, attending, result.
   const waveCount = int(
     db.prepare(`SELECT COUNT(DISTINCT calling_wave) n FROM call_logs WHERE nsat_round IN (${inc})`).get() as any
@@ -758,19 +758,15 @@ function funnelN3(round: Round = "NSAT-3", src?: Src): FunnelResult {
         detail: true,
       });
     }
-    // For NSAT-4 the Test row IS the pass count (only 'Pass' is recorded), so a
-    // separate "Result: Pass" line would just repeat it.
-    if (!useN4) {
-      rows.push({
-        key: "result",
-        label: "Result: Pass",
-        count: passed,
-        pct: pb(passed),
-        drop: null,
-        detail: true,
-        note: `${passed.toLocaleString("en-IN")} pass / ${failed} fail`,
-      });
-    }
+    rows.push({
+      key: "result",
+      label: "Result: Pass",
+      count: passed,
+      pct: pb(passed),
+      drop: null,
+      detail: true,
+      note: `${passed.toLocaleString("en-IN")} pass / ${failed} fail`,
+    });
   }
   main("slot_form", "Slot Form", couns, "no slots booked yet");
   // Slot Form is day-wise: expand to Day 1 (16 Jul 2026), Day 2, … with per-day booked counts
