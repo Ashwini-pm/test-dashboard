@@ -504,6 +504,7 @@ export interface DrillParams {
   sprog?: string | null;   // program the student picked on the page; "__none__" = never signed up
   couns?: string[] | null; // counsellor names, or "__none__" for unassigned — multi-select
   tg?: string | null;      // CSAT-1 test attendance: given | noshow | nostatus
+  tag?: string | null;     // "src:organic" | "utm:vedantu_yt_bca" (comma-split tag)
 }
 
 // Distinct values for the filter dropdowns on the drill page.
@@ -603,6 +604,17 @@ export function drill(ctx: Ctx, round: string | null | undefined, p: DrillParams
     if (p.tg === "given")    { w.push("m.registered='paid' AND m.test_given='Test_Given'"); bits.push("sat the test"); }
     if (p.tg === "noshow")   { w.push("m.registered='paid' AND m.test_given='Test_Not_Appear'"); bits.push("registered, did not appear"); }
     if (p.tg === "nostatus") { w.push("m.registered='paid' AND nullif(m.test_given,'') IS NULL"); bits.push("registered, no test status yet"); }
+  }
+  // Comma-split source / UTM value, matched through csat_tag so the count always
+  // equals what the attendance table shows (both read the same split).
+  if (p.tag && m.table === "csat_map") {
+    const i = p.tag.indexOf(":");
+    const kind = i > 0 ? p.tag.slice(0, i) : "";
+    const key = i > 0 ? p.tag.slice(i + 1) : "";
+    if ((kind === "src" || kind === "utm") && key) {
+      w.push(`m.lead_id IN (SELECT lead_id FROM csat_tag WHERE kind='${esc(kind)}' AND key='${esc(key.toLowerCase())}')`);
+      bits.push(`${kind === "src" ? "source" : "utm"} ${key}`);
+    }
   }
   if (p.pstage && m.table === "nsat4_map") {
     if (p.pstage === "test") { w.push("nullif(m.test_result,'') IS NOT NULL"); bits.push("test given"); }

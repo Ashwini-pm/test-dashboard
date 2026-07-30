@@ -1539,3 +1539,9 @@ table.list tbody tr:hover td {
   border: 1px solid color-mix(in srgb, var(--blue) 22%, transparent);
   font-size: 12.5px; line-height: 1.5;
 }
+.ta-h {
+  margin: 18px 0 8px; font-size: 12px; font-weight: 700; letter-spacing: .04em;
+  text-transform: uppercase; color: var(--muted);
+}
+.ta-h:first-of-type { margin-top: 4px; }
+.ta-foot { margin-top: 8px; font-size: 11.5px; color: var(--muted); line-height: 1.55; }

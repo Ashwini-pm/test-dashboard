@@ -222,6 +222,8 @@ function buildMapIndexes(): void {
   run("CREATE INDEX IF NOT EXISTS ix_n4map_lead ON nsat4_map(lead_id)");
   run("CREATE INDEX IF NOT EXISTS ix_n4slot_lead ON nsat4_slots(lead_id)");
   run("CREATE INDEX IF NOT EXISTS ix_aireach ON ai_reach(cohort, lead_id)");
+  run("CREATE INDEX IF NOT EXISTS ix_csattag ON csat_tag(kind, key)");
+  run("CREATE INDEX IF NOT EXISTS ix_csattag_lead ON csat_tag(lead_id)");
   run("CREATE INDEX IF NOT EXISTS ix_leads_student ON leads(student_id)");
   // Stage tables carry no lead_id index in schema.sql, yet /students runs a
   // correlated subquery per lead against every one of them.
@@ -495,6 +497,15 @@ function overlayNsat4Csat(pulls: CsatPull): void {
   db.exec("DROP TABLE IF EXISTS nsat4_slots");
   db.exec("CREATE TABLE nsat4_slots (lead_id TEXT, booking_id TEXT, call_date TEXT, call_time TEXT, panelist TEXT, meet_link TEXT, conf_sent INTEGER, booked_at TEXT)");
   const insSlot = db.prepare("INSERT INTO nsat4_slots(lead_id,booking_id,call_date,call_time,panelist,meet_link,conf_sent,booked_at) VALUES (?,?,?,?,?,?,?,?)");
+  // campaign_source and utm_campaign can each hold SEVERAL comma-separated values
+  // in one cell ("Influencers, Organic") — a student who arrived by more than one
+  // route. Split once here and credit every value, so the tables and the drill-down
+  // agree by construction instead of both trying to parse the cell in SQL.
+  // Keys are lower-cased ('organic' and 'Organic' are the same source); label keeps
+  // a readable raw form. These tables DOUBLE COUNT by design.
+  db.exec("DROP TABLE IF EXISTS csat_tag");
+  db.exec("CREATE TABLE csat_tag (lead_id TEXT, kind TEXT, key TEXT, label TEXT)");
+  const insTag = db.prepare("INSERT INTO csat_tag(lead_id,kind,key,label) VALUES (?,?,?,?)");
   db.exec("DROP TABLE IF EXISTS csat_map");
   db.exec("CREATE TABLE csat_map (lead_id TEXT, round_tag TEXT, registered TEXT, campaign_source TEXT, origin TEXT, crm_source_category TEXT, total_calls INTEGER, connected_calls INTEGER, first_signup TEXT, first_call_at TEXT, last_call_at TEXT, counsellor TEXT, name TEXT, phone TEXT, utm_campaign TEXT, crm_program TEXT, signup_programs TEXT, test_given TEXT, test_given_at TEXT)");
   const insCsat = db.prepare("INSERT INTO csat_map(lead_id,round_tag,registered,campaign_source,origin,crm_source_category,total_calls,connected_calls,first_signup,first_call_at,last_call_at,counsellor,name,phone,utm_campaign,crm_program,signup_programs,test_given,test_given_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)");
@@ -560,6 +571,20 @@ function overlayNsat4Csat(pulls: CsatPull): void {
           const st = String(r.signup_tables ?? "");
           const tag = st === "bba" ? "CSAT-BBA" : st === "bca" ? "CSAT-BCA" : "CSAT-COMB";
           insCsat.run(String(r.lead_id ?? ""), tag, r.registered ?? null, r.campaign_source ?? null, r.origin ?? null, r.crm_source_category ?? null, r.total_calls ?? null, r.connected_calls ?? null, r.first_signup ?? null, r.first_call_at ?? null, r.last_call_at ?? null, r.counsellor ?? null, r.name ?? null, r.phone ?? null, r.utm_campaign ?? null, r.crm_program ?? null, r.signup_programs ?? null, r.test_given ?? null, r.test_given_at ?? null);
+          // one tag row per (lead, value); dedupe so a cell listing the same value
+          // twice in different case does not count the lead twice
+          const lid = String(r.lead_id ?? "");
+          for (const [kind, raw] of [["src", r.campaign_source], ["utm", r.utm_campaign]] as const) {
+            const cell = String(raw ?? "").trim();
+            const vals = cell ? cell.split(",").map((v) => v.trim()).filter(Boolean) : [];
+            const seenK = new Set<string>();
+            for (const v of vals.length ? vals : ["(not set)"]) {
+              const k = v.toLowerCase();
+              if (seenK.has(k)) continue;
+              seenK.add(k);
+              insTag.run(lid, kind, k, v);
+            }
+          }
         }
         continue;
       }

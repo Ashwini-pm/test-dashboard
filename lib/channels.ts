@@ -187,11 +187,20 @@ export interface AttendRow {
   noStatus: number;
   /** raw signup_programs value, for the &sprog= drill; absent on the total row */
   prog?: string;
+  /** total leads, not just registrations — only set on the source/UTM tables */
+  leads?: number;
+  /** "src:organic" / "utm:vedantu_yt_bca", for the &tag= drill */
+  tag?: string;
 }
 
 export interface Attendance {
   all: AttendRow;
   byProgramme: AttendRow[];
+  /** campaign_source, comma-split — DOUBLE COUNTS, does not sum to registrations */
+  bySource: AttendRow[];
+  /** utm_campaign, comma-split, only names above minUtmReg — also double counts */
+  byUtm: AttendRow[];
+  minUtmReg: number;
   /** max(test_given_at) — this feed moves in batches, not continuously */
   lastSync: string | null;
 }
@@ -216,7 +225,52 @@ function attendRow(key: string, label: string, where: string): AttendRow {
   };
 }
 
-export function csatAttendance(where = ""): Attendance | null {
+/**
+ * Attendance grouped by a comma-split tag (campaign_source or utm_campaign).
+ *
+ * Every value on a multi-value cell is credited, so a student who arrived via
+ * "Influencers, Organic" counts under both. These tables therefore DOUBLE COUNT
+ * and their columns do not add up to the registration total — that is intended,
+ * and the UI says so under each table.
+ *
+ * Leads are counted DISTINCT per key, so a cell repeating a value in a different
+ * case ('organic, Organic') still counts the lead once.
+ */
+function attendanceByTag(kind: "src" | "utm", where: string): AttendRow[] {
+  const rows = db
+    .prepare(
+      `SELECT t.key,
+              min(t.label) label,
+              COUNT(DISTINCT t.lead_id) leads,
+              COUNT(DISTINCT CASE WHEN m.registered='paid' THEN t.lead_id END) reg,
+              COUNT(DISTINCT CASE WHEN m.registered='paid' AND m.test_given='Test_Given' THEN t.lead_id END) g,
+              COUNT(DISTINCT CASE WHEN m.registered='paid' AND m.test_given='Test_Not_Appear' THEN t.lead_id END) ns,
+              COUNT(DISTINCT CASE WHEN m.registered='paid' AND nullif(m.test_given,'') IS NULL THEN t.lead_id END) unk
+         FROM csat_tag t JOIN csat_map m ON m.lead_id = t.lead_id
+        WHERE t.kind = ?${where}
+        GROUP BY t.key`
+    )
+    .all(kind) as Record<string, string | number>[];
+  // Sources arrive with inconsistent casing ('organic' / 'Organic'), which is why
+  // the key is lower-cased; capitalise the first character for display. UTM names
+  // are tags and keep their exact casing.
+  const disp = (v: string) => (kind === "src" && v && /^[a-z]/.test(v) ? v[0].toUpperCase() + v.slice(1) : v);
+  return rows.map((r) => ({
+    key: `${kind}_${String(r.key)}`,
+    label: disp(String(r.label)),
+    leads: Number(r.leads ?? 0),
+    registered: Number(r.reg ?? 0),
+    given: Number(r.g ?? 0),
+    noShow: Number(r.ns ?? 0),
+    noStatus: Number(r.unk ?? 0),
+    tag: `${kind}:${String(r.key)}`,
+  }));
+}
+
+// utm_campaign placeholders that are not campaign names, so not influencer rows
+const UTM_PLACEHOLDER = new Set(["(not set)", "none", "null", "na", "n/a", "-"]);
+
+export function csatAttendance(where = "", minUtmReg = 20): Attendance | null {
   if (!tableReady("csat_map")) return null;
   let cols: { name: string }[] = [];
   try {
@@ -251,5 +305,17 @@ export function csatAttendance(where = ""): Attendance | null {
     .prepare(`SELECT max(test_given_at) d FROM csat_map WHERE nullif(test_given_at,'') IS NOT NULL`)
     .get() as { d: string | null } | undefined;
 
-  return { all, byProgramme, lastSync: ls?.d ?? null };
+  const tagWhere = where.replace(/\bsignup_programs\b/g, "m.signup_programs")
+                        .replace(/\bround_tag\b/g, "m.round_tag");
+  // Sources: by volume. Keeps rows with leads but zero registrations — "this
+  // source produced leads and nothing else" is a finding, not a gap.
+  const bySource = attendanceByTag("src", tagWhere)
+    .sort((a, b) => b.registered - a.registered || (b.leads ?? 0) - (a.leads ?? 0));
+  // UTM names: by Appeared %, since a raw count just re-ranks by volume. Small
+  // names are excluded or a 2-registration name lands on top at 50%.
+  const byUtm = attendanceByTag("utm", tagWhere)
+    .filter((r) => r.registered >= minUtmReg && !UTM_PLACEHOLDER.has(r.label.toLowerCase()))
+    .sort((a, b) => b.given / b.registered - a.given / a.registered || b.registered - a.registered);
+
+  return { all, byProgramme, bySource, byUtm, minUtmReg, lastSync: ls?.d ?? null };
 }

@@ -20,29 +20,52 @@ function istStamp(raw: string | null): string | null {
   return `${d.getUTCDate()} ${MON[d.getUTCMonth()]}, ${p2(d.getUTCHours())}:${p2(d.getUTCMinutes())} IST`;
 }
 
-function Row({ r, qs, strong }: { r: AttendRow; qs: string; strong?: boolean }) {
-  // programme rows carry their own signup_programs filter, so the list that opens
-  // is that programme's students, not the whole cohort's
-  const sp = r.prog ? `&sprog=${encodeURIComponent(r.prog)}` : "";
+function Row({ r, qs, strong, showLeads }: { r: AttendRow; qs: string; strong?: boolean; showLeads?: boolean }) {
+  // Each row carries its own filter so the list that opens is that row's students:
+  // programme rows use signup_programs, source/UTM rows use the comma-split tag.
+  const own = r.prog
+    ? `&sprog=${encodeURIComponent(r.prog)}`
+    : r.tag
+      ? `&tag=${encodeURIComponent(r.tag)}`
+      : "";
   const link = (n: number, tg: string, cls?: string) => (
     <td className={`tnum${cls ? ` ${cls}` : ""}`}>
-      {n > 0 ? <Link href={`/drill?${qs}&tg=${tg}${sp}`} className="sb-link">{nf(n)}</Link> : nf(n)}
+      {n > 0 ? <Link href={`/drill?${qs}&tg=${tg}${own}`} className="sb-link">{nf(n)}</Link> : nf(n)}
     </td>
   );
+  // no registrations means a test status was never possible — a dash, not 0%
+  const noReg = r.registered === 0;
   return (
     <tr className={strong ? "co-strong" : undefined}>
       <td>{r.label}</td>
+      {showLeads && <td className="tnum">{nf(r.leads ?? 0)}</td>}
       <td className="tnum">{nf(r.registered)}</td>
-      {link(r.given, "given", "cv-reg")}
-      <td className="tnum">{pct(r.given, r.registered)}</td>
-      {link(r.noShow, "noshow", "fc-bad")}
-      {link(r.noStatus, "nostatus")}
+      {noReg ? <td className="tnum fc-zero">–</td> : link(r.given, "given", "cv-reg")}
+      <td className="tnum">{noReg ? "–" : pct(r.given, r.registered)}</td>
+      {noReg ? <td className="tnum fc-zero">–</td> : link(r.noShow, "noshow", "fc-bad")}
+      {noReg ? <td className="tnum fc-zero">–</td> : link(r.noStatus, "nostatus")}
     </tr>
   );
 }
 
+function Head({ first, showLeads }: { first: string; showLeads?: boolean }) {
+  return (
+    <thead>
+      <tr>
+        <th>{first}</th>
+        {showLeads && <th className="tnum">Leads</th>}
+        <th className="tnum">Registered</th>
+        <th className="tnum">Appeared</th>
+        <th className="tnum">Appeared %</th>
+        <th className="tnum">Did not appear</th>
+        <th className="tnum">No status yet</th>
+      </tr>
+    </thead>
+  );
+}
+
 export default function TestAttendanceBlock({ data, qs }: { data: Attendance; qs: string }) {
-  const { all, byProgramme, lastSync } = data;
+  const { all, byProgramme, bySource, byUtm, minUtmReg, lastSync } = data;
   const stamp = istStamp(lastSync);
   // The programme gap is the story, so surface the best and worst rather than
   // leaving the reader to scan for them.
@@ -77,24 +100,60 @@ export default function TestAttendanceBlock({ data, qs }: { data: Attendance; qs
           </div>
         </div>
 
+        <h4 className="ta-h">By programme</h4>
         <div className="cv-scroll">
           <table className="cv-table ta-table">
-            <thead>
-              <tr>
-                <th>Programme</th>
-                <th className="tnum">Registered</th>
-                <th className="tnum">Appeared</th>
-                <th className="tnum">Appeared %</th>
-                <th className="tnum">Did not appear</th>
-                <th className="tnum">No status yet</th>
-              </tr>
-            </thead>
+            <Head first="Programme" />
             <tbody>
               {byProgramme.map((p) => <Row key={p.key} r={p} qs={qs} />)}
               <Row r={all} qs={qs} strong />
             </tbody>
           </table>
         </div>
+
+        {/* Which source brought students who actually sat the test. */}
+        {bySource.length > 0 && (
+          <>
+            <h4 className="ta-h">By source</h4>
+            <div className="cv-scroll">
+              <table className="cv-table ta-table">
+                <Head first="Source" showLeads />
+                <tbody>
+                  {bySource.map((r) => <Row key={r.key} r={r} qs={qs} showLeads />)}
+                </tbody>
+              </table>
+            </div>
+            <p className="ta-foot">
+              A lead can arrive through more than one route, and those cells hold several
+              comma-separated values, so every source on the row is credited.{" "}
+              <b>This table double counts on purpose and does not add up to {nf(all.registered)} registrations.</b>{" "}
+              Compare sources on Appeared %, not on Appeared: Influencers tops any raw count because it is
+              {" "}{pct(bySource[0]?.registered ?? 0, all.registered)} of the volume. A dash means the source
+              produced leads but no registrations, so a test status was never possible.
+            </p>
+          </>
+        )}
+
+        {/* Which influencer actually worked. */}
+        {byUtm.length > 0 && (
+          <>
+            <h4 className="ta-h">By UTM name</h4>
+            <div className="cv-scroll">
+              <table className="cv-table ta-table">
+                <Head first="UTM name" />
+                <tbody>
+                  {byUtm.map((r) => <Row key={r.key} r={r} qs={qs} />)}
+                </tbody>
+              </table>
+            </div>
+            <p className="ta-foot">
+              Sorted by Appeared %, not by volume, because the two disagree. Names with fewer than{" "}
+              {minUtmReg} registrations are left out, or a name with 2 registrations and 1 appearance
+              would lead on 50%. Placeholder values like &quot;(not set)&quot; and &quot;none&quot; are not
+              campaign names and are excluded. <b>Multi-value cells are split, so this table double counts too.</b>
+            </p>
+          </>
+        )}
 
         {best && worst && best.key !== worst.key && (
           <div className="ta-gap">
@@ -103,6 +162,29 @@ export default function TestAttendanceBlock({ data, qs }: { data: Attendance; qs
             {" "}— that gap matters more than the overall {pct(all.given, all.registered)}.
           </div>
         )}
+
+        {/* Volume and quality pull in opposite directions; a table sorted by
+            registrations hides that entirely. */}
+        {(() => {
+          if (byUtm.length < 2) return null;
+          const byVol = [...byUtm].sort((a, b) => b.registered - a.registered);
+          const biggest = byVol[0];
+          const rival = byVol.find((r) => r.key !== biggest.key && r.given / r.registered > biggest.given / biggest.registered * 1.5);
+          const zero = byUtm.filter((r) => r.given === 0);
+          if (!rival) return null;
+          const ratio = (rival.given / rival.registered) / (biggest.given / biggest.registered);
+          return (
+            <div className="ta-gap">
+              <b>{biggest.label}</b> brought the most registrations of anyone, {nf(biggest.registered)}, and only{" "}
+              {pct(biggest.given, biggest.registered)} of them sat the test. <b>{rival.label}</b> brought{" "}
+              {nf(rival.registered)} and {pct(rival.given, rival.registered)} sat it — the same effort,{" "}
+              {ratio >= 2 ? `more than ${Math.floor(ratio)} times` : "well over"} the yield.
+              {zero.length > 0 && (
+                <> {zero.map((z) => `${z.label} brought ${nf(z.registered)} registrations and not one appeared`).join("; ")}.</>
+              )}
+            </div>
+          );
+        })()}
       </div>
     </section>
   );
