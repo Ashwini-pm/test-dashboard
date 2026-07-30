@@ -1,5 +1,6 @@
 import Link from "next/link";
 import type { Attendance, AttendRow } from "@/lib/channels";
+import CalledVsAppeared from "./CalledVsAppeared";
 
 // CSAT-1 test attendance. Appeared is always a share of REGISTRATIONS, never of
 // leads: an unregistered lead was never due to sit the test. "No status yet" is
@@ -65,7 +66,7 @@ function Head({ first, showLeads }: { first: string; showLeads?: boolean }) {
 }
 
 export default function TestAttendanceBlock({ data, qs }: { data: Attendance; qs: string }) {
-  const { all, byProgramme, bySource, byUtm, minUtmReg, lastSync } = data;
+  const { all, byProgramme, bySource, byUtm, minUtmReg, calling, lastSync } = data;
   const stamp = istStamp(lastSync);
   // The programme gap is the story, so surface the best and worst rather than
   // leaving the reader to scan for them.
@@ -154,6 +155,8 @@ export default function TestAttendanceBlock({ data, qs }: { data: Attendance; qs
             </p>
           </>
         )}
+
+        {calling && <CalledVsAppeared data={calling} qs={qs} />}
 
         {best && worst && best.key !== worst.key && (
           <div className="ta-gap">

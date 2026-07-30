@@ -201,6 +201,8 @@ export interface Attendance {
   /** utm_campaign, comma-split, only names above minUtmReg — also double counts */
   byUtm: AttendRow[];
   minUtmReg: number;
+  /** called-vs-appeared, registered students only */
+  calling: CalledAppeared | null;
   /** max(test_given_at) — this feed moves in batches, not continuously */
   lastSync: string | null;
 }
@@ -317,5 +319,98 @@ export function csatAttendance(where = "", minUtmReg = 20): Attendance | null {
     .filter((r) => r.registered >= minUtmReg && !UTM_PLACEHOLDER.has(r.label.toLowerCase()))
     .sort((a, b) => b.given / b.registered - a.given / a.registered || b.registered - a.registered);
 
-  return { all, byProgramme, bySource, byUtm, minUtmReg, lastSync: ls?.d ?? null };
+  return {
+    all, byProgramme, bySource, byUtm, minUtmReg,
+    calling: csatCalledVsAppeared(where),
+    lastSync: ls?.d ?? null,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// CSAT-1: did calling a registered student get them to sit the test?
+//
+// Population is REGISTERED students only. An unregistered lead was never due to
+// sit the test, so including them would make calling look worse than it is.
+//
+// Reached by calling = human (connected_calls > 0) OR AI (>=1 ai_calls row with
+// status 'completed'). Appeared = test_given 'Test_Given'.
+//
+// NOTE ON NULLS: test_given is NULL for 11 registered leads. "Not appeared" must
+// treat NULL as not-appeared, otherwise SQL's three-valued logic drops those rows
+// and the four Venn regions no longer add up to the cohort (886/451 instead of
+// 891/457). Hence the CASE ... ELSE 0 form rather than NOT (x = 'Test_Given').
+//
+// Both reach signals are cumulative to date, not "called before the test", so
+// this is association, not proof of cause. The UI says so.
+// ---------------------------------------------------------------------------
+
+export interface CalledAppeared {
+  /** whole "reached by calling" circle */
+  reached: number;
+  /** whole "appeared" circle */
+  appeared: number;
+  /** the four mutually exclusive regions; they add to `total` */
+  both: number;
+  reachedNoShow: number;
+  appearedUnreached: number;
+  neither: number;
+  total: number;
+  /** by which channel reached them: exclusive, adds to `total` */
+  channels: { key: string; label: string; registered: number; appeared: number }[];
+}
+
+export function csatCalledVsAppeared(where = ""): CalledAppeared | null {
+  if (!tableReady("csat_map") || !tableReady("ai_reach")) return null;
+  // per-lead flags, computed once
+  const base = `
+    SELECT CASE WHEN coalesce(m.connected_calls,0) > 0 THEN 1 ELSE 0 END hu,
+           CASE WHEN EXISTS (
+             SELECT 1 FROM ai_reach r
+              WHERE r.cohort='CSAT-1' AND r.lead_id=m.lead_id AND r.reached=1
+           ) THEN 1 ELSE 0 END ai,
+           CASE WHEN m.test_given='Test_Given' THEN 1 ELSE 0 END app
+      FROM csat_map m
+     WHERE m.registered='paid'${where}`;
+  const r = db
+    .prepare(
+      `SELECT COUNT(*) total,
+              SUM(CASE WHEN hu=1 OR ai=1 THEN 1 ELSE 0 END) reached,
+              SUM(app) appeared,
+              SUM(CASE WHEN (hu=1 OR ai=1) AND app=1 THEN 1 ELSE 0 END) both_n,
+              SUM(CASE WHEN (hu=1 OR ai=1) AND app=0 THEN 1 ELSE 0 END) rns,
+              SUM(CASE WHEN hu=0 AND ai=0 AND app=1 THEN 1 ELSE 0 END) aun,
+              SUM(CASE WHEN hu=0 AND ai=0 AND app=0 THEN 1 ELSE 0 END) none_n,
+              SUM(CASE WHEN hu=1 AND ai=1 THEN 1 ELSE 0 END) c_both,
+              SUM(CASE WHEN hu=1 AND ai=1 AND app=1 THEN 1 ELSE 0 END) c_both_a,
+              SUM(CASE WHEN hu=1 AND ai=0 THEN 1 ELSE 0 END) c_hu,
+              SUM(CASE WHEN hu=1 AND ai=0 AND app=1 THEN 1 ELSE 0 END) c_hu_a,
+              SUM(CASE WHEN ai=1 AND hu=0 THEN 1 ELSE 0 END) c_ai,
+              SUM(CASE WHEN ai=1 AND hu=0 AND app=1 THEN 1 ELSE 0 END) c_ai_a,
+              SUM(CASE WHEN hu=0 AND ai=0 THEN 1 ELSE 0 END) c_no,
+              SUM(CASE WHEN hu=0 AND ai=0 AND app=1 THEN 1 ELSE 0 END) c_no_a
+         FROM (${base})`
+    )
+    .get() as Record<string, number>;
+  if (!r || !Number(r.total)) return null;
+  const n = (k: string) => Number(r[k] ?? 0);
+  const channels = [
+    { key: "both", label: "Both AI and human", registered: n("c_both"), appeared: n("c_both_a") },
+    { key: "hu", label: "Human only", registered: n("c_hu"), appeared: n("c_hu_a") },
+    { key: "ai", label: "AI only", registered: n("c_ai"), appeared: n("c_ai_a") },
+    { key: "no", label: "Nobody", registered: n("c_no"), appeared: n("c_no_a") },
+  ]
+    // sort by yield, so the ordering itself carries the finding
+    .sort((a, b) =>
+      (b.registered ? b.appeared / b.registered : 0) - (a.registered ? a.appeared / a.registered : 0)
+    );
+  return {
+    reached: n("reached"),
+    appeared: n("appeared"),
+    both: n("both_n"),
+    reachedNoShow: n("rns"),
+    appearedUnreached: n("aun"),
+    neither: n("none_n"),
+    total: n("total"),
+    channels,
+  };
 }

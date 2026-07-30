@@ -1545,3 +1545,27 @@ table.list tbody tr:hover td {
 }
 .ta-h:first-of-type { margin-top: 4px; }
 .ta-foot { margin-top: 8px; font-size: 11.5px; color: var(--muted); line-height: 1.55; }
+
+/* ---- called vs appeared venn (Students) ---------------------------------- */
+.ca-wrap { margin: 4px 0 14px; }
+.ca-svg { width: 100%; height: auto; max-width: 440px; display: block; overflow: visible; }
+.ca-box { fill: none; stroke: var(--divider); stroke-dasharray: 4 4; }
+.ca-boxlab { font-size: 10.5px; font-weight: 600; fill: var(--muted); }
+.ca-c-reached  { fill: var(--blue);  fill-opacity: .38; stroke: var(--blue);  stroke-width: 1.5; }
+.ca-c-appeared { fill: var(--green); fill-opacity: .48; stroke: var(--green); stroke-width: 1.5; }
+.ca-lead { stroke: var(--muted); stroke-width: 1; opacity: .55; }
+.ca-n {
+  font-size: 15px; font-weight: 800; fill: var(--ink); text-anchor: middle;
+  paint-order: stroke; stroke: var(--card); stroke-width: 3px;
+}
+.ca-n-sm { font-size: 12.5px; }
+.ca-t {
+  font-size: 9.5px; font-weight: 600; fill: var(--muted); text-anchor: middle;
+  paint-order: stroke; stroke: var(--card); stroke-width: 2.5px;
+}
+.ca-key { display: flex; flex-wrap: wrap; gap: 4px 16px; margin-top: 6px; font-size: 11.5px; color: var(--muted); }
+.ca-key span { display: inline-flex; align-items: center; gap: 5px; }
+.ca-key i { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
+.ca-sw-reached  { background: var(--blue); opacity: .6; }
+.ca-sw-appeared { background: var(--green); opacity: .7; }
+.ca-pct { font-weight: 700; }
