@@ -116,13 +116,6 @@ export function CallingFunnelBlock({
               </tbody>
             </table>
           </div>
-          <p className="cv-caveat">
-            <b>Not registered + Registered add back to All leads.</b> Called % is of that segment&apos;s leads;
-            Touched % is of those called. <b>No calling data</b> ({nf(all.noData)} leads) is not the same as
-            &quot;not called&quot;: these leads exist in the CRM with phone numbers, but their record pre-dates the
-            window of the Redash dump that feeds calling info, so the dump returns no row for them. We cannot
-            say whether they were called.
-          </p>
         </div>
       </section>
 
@@ -183,9 +176,6 @@ export function CallingFunnelBlock({
                 ));
               })()}
             </div>
-            <p className="cv-caveat">
-              Bar height = leads created that day; the solid portion = those who went on to register.
-            </p>
           </div>
         </section>
       )}

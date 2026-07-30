@@ -55,10 +55,6 @@ export default function FunnelCallTable({
           ))}
         </tbody>
       </table>
-      <p className="cv-caveat">
-        Percentages are share of the column to their left (Called of Students; Picked of Called).
-        This is <b>coverage, not conversion</b>.
-      </p>
     </div>
   );
 }

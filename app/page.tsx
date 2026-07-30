@@ -94,7 +94,6 @@ export default async function Overview({ searchParams }: { searchParams: Promise
         <div className="card">
           <header><h3>Conversion Funnel</h3><span className="cap">full funnel · {round}</span></header>
           <FunnelView rows={f.rows} maxCount={maxCount} />
-          {f.caveat && <p className="cv-caveat">{f.caveat}</p>}
         </div>
       </section>
 
@@ -137,11 +136,7 @@ export default async function Overview({ searchParams }: { searchParams: Promise
                 {postTest.length ? `after the exam · ${postTest.map((r) => r.label.toLowerCase()).join(" · ")}` : "after the exam"}
               </span>
             </header>
-            <FunnelCallTable
-              rows={postTest}
-              qs={dq}
-              emptyNote={`No post-test data for ${round}: this cohort has no test or counselling rows yet, so there is nothing to split. It fills in once the exam and counselling feeds land.`}
-            />
+            <FunnelCallTable rows={postTest} qs={dq} emptyNote="No post-test data yet." />
           </div>
         </section>
         </>

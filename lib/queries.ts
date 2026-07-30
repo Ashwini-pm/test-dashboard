@@ -505,7 +505,7 @@ export function alerts(round: Round): AlertCard[] {
   );
 }
 
-export interface FunnelResult { base: number; rows: FunnelRow[]; caveat?: string }
+export interface FunnelResult { base: number; rows: FunnelRow[] }
 
 export function funnel(round: Round, src?: Src): FunnelResult {
   // NSAT-4 and CSAT use the same real-stage funnel layout as NSAT-3; only
@@ -721,13 +721,7 @@ function funnelN3(round: Round = "NSAT-3", src?: Src): FunnelResult {
   progSplit("lead", "");
   main("registration", "Registration", reg, "no registration feed");
   progSplit("registration", " AND registered='paid'");
-  main(
-    "test",
-    useN4 ? "Test passed" : "Test",
-    appeared,
-    "awaiting exam feed",
-    useN4 ? `${appeared.toLocaleString("en-IN")} cleared the test (counselling sheet records passes only)` : undefined
-  );
+  main("test", useN4 ? "Test passed" : "Test", appeared, "awaiting exam feed");
   // Detail nested under Test (revealed by the chevron): AI calling, attending, result.
   const waveCount = int(
     db.prepare(`SELECT COUNT(DISTINCT calling_wave) n FROM call_logs WHERE nsat_round IN (${inc})`).get() as any
@@ -778,7 +772,7 @@ function funnelN3(round: Round = "NSAT-3", src?: Src): FunnelResult {
       });
     }
   }
-  main("slot_form", "Slot Form", couns, "no slots booked yet", `${couns.toLocaleString("en-IN")} slots booked`);
+  main("slot_form", "Slot Form", couns, "no slots booked yet");
   // Slot Form is day-wise: expand to Day 1 (16 Jul 2026), Day 2, … with per-day booked counts
   if (couns > 0) {
     rows[rows.length - 1].expandable = true;
@@ -808,40 +802,8 @@ function funnelN3(round: Round = "NSAT-3", src?: Src): FunnelResult {
       : "counselling not started yet"
   );
   main("offer_letter", "Offer Letter", offers, "no offer feed yet");
-  const sbRecent = useN4
-    ? c(`SELECT COUNT(*) n FROM nsat4_map WHERE seat_booked='Yes' AND seat_booked_date >= '2026-07-14'`)
-    : 0;
-  main(
-    "seat_payment",
-    "Seat Payment",
-    seats,
-    "no seat-payment feed yet",
-    useN4 && seats > 0
-      ? `${sbRecent} booked during the round · ${seats - sbRecent} booked earlier`
-      : undefined
-  );
-  // Flag the break in the chain: for NSAT-4 the offers and seats did not come
-  // through this test-and-counselling path, so the drop percentages below Test
-  // passed are not a progression.
-  let caveat: string | undefined;
-  if (useN4) {
-    const offSlot = c(
-      `SELECT COUNT(*) n FROM nsat4_map WHERE (nullif(offer_letter,'') IS NOT NULL OR seat_booked='Yes')
-         AND lead_id NOT IN (SELECT lead_id FROM nsat4_slots)
-         AND coalesce(test_result,'') <> 'Pass'`
-    );
-    const sbOld = seats - sbRecent;
-    caveat =
-      `Seat Payment reads seat_booked on the lead map, populated from the NSAT sheet's SB Date because the CRM dump ` +
-      `only returns leads created from 14 Jul and so sees just 5 of them. Of the ${seats}, ${sbRecent} booked during ` +
-      `this round and ${sbOld} had already booked a seat earlier (some as far back as 2022), so the round did not ` +
-      `produce all ${seats}. None of them passed the NSAT-4 test or booked a counselling slot, and Offer Letter comes ` +
-      `from the CRM (${offers}), which undercounts for the same window reason. Counselling done cannot be measured at ` +
-      `all: the counselling sheet records the booking, not the attendance. Treat everything below Test passed as ` +
-      `separate counts, not a conversion chain.`;
-    void offSlot;
-  }
-  return { base, rows, caveat };
+  main("seat_payment", "Seat Payment", seats, "no seat-payment feed yet");
+  return { base, rows };
 }
 
 // ---------------------------------------------------------------------------

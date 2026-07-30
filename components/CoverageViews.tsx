@@ -147,10 +147,6 @@ export function SpeedToLead({ bands, qs }: { bands: SpeedBand[]; qs: string }) {
           </div>
         ))}
       </div>
-      <p className="cv-caveat">
-        Read as <b>coverage, not conversion</b>. Calling targets students who did not register,
-        so a &quot;called → converted&quot; comparison runs backwards here.
-      </p>
     </div>
   );
 }

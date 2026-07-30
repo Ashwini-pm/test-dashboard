@@ -141,11 +141,6 @@ export default async function Cohort({ searchParams }: { searchParams: Promise<R
                   </tbody>
                 </table>
               </div>
-              <p className="cv-caveat">
-                <b>Called %</b> is of leads in that segment; <b>Connected %</b> is of those called.
-                <b> Not called</b> means the CRM dump says zero attempts. <b>No call data</b> means there is
-                no dump row for that lead, so calls are unknown, not zero. The two are never merged.
-              </p>
             </div>
           </section>
 
@@ -266,35 +261,6 @@ export default async function Cohort({ searchParams }: { searchParams: Promise<R
             </section>
           )}
 
-          {/* Caveats */}
-          <section className="grid mb">
-            <div className="card co-caveat">
-              <header><h3>Read this before quoting the numbers</h3></header>
-              <ul>
-                <li>
-                  <b>The CRM dump only covers leads created from {key === "CSAT-1" ? "20 Jul" : key === "NSAT-5" ? "27 Jul" : "14 Jul"}.</b> A student who
-                  signed up during the campaign but was already an older lead in the CRM has no dump row. They show as
-                  <code> origin = capture_only</code> with NULL calling columns, and land in the
-                  <b> No call data</b> column: <b>{nf(ov.noCallData)}</b> leads here.
-                </li>
-                <li>
-                  <b>Offer letters ({nf(ov.offerLetters)}) and seats ({nf(ov.seats)}) read low</b> for the same reason.
-                  Leads with no dump row cannot show an offer or a seat even if they have one in the CRM.
-                </li>
-                <li>
-                  <b>Attributed leads have no registration.</b> They never filled the form, so
-                  <code> registered = unknown</code> and they can never count toward registrations. They are in the
-                  lead total, never in the registration total.
-                </li>
-                <li>
-                  <b>Lead id is the only key.</b> Nothing is joined or deduplicated on email or phone, and a signup
-                  with no lead id is not counted anywhere.
-                </li>
-                {meta && !meta.hasPaidAt && <li><b>No payment timestamp</b> in this map, so registrations over time is not shown for {meta.label}.</li>}
-                {refreshed && <li>Map last refreshed: <b>{String(refreshed).replace("T", " ").slice(0, 19)}</b> ({meta?.refresh}).</li>}
-              </ul>
-            </div>
-          </section>
         </>
       )}
     </>
