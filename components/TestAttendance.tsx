@@ -2,10 +2,10 @@ import Link from "next/link";
 import type { Attendance, AttendRow } from "@/lib/channels";
 import CalledVsAppeared from "./CalledVsAppeared";
 
-// CSAT-1 test attendance. Appeared is always a share of REGISTRATIONS, never of
-// leads: an unregistered lead was never due to sit the test. "No status yet" is
-// kept as its own column and never folded into "did not appear" — one is a
-// no-show, the other is missing information.
+// CSAT-1 test given. Always a share of REGISTERED students, never of leads: a lead
+// who never registered was never due to give the test. "Not known yet" stays its own column
+// and is never folded into "did not give test" — one means they skipped it, the
+// other means the sheet has no status for them.
 
 const nf = (n: number) => n.toLocaleString("en-IN");
 const pct = (a: number, b: number) => (b > 0 ? `${Math.round((a / b) * 100)}%` : "—");
@@ -56,10 +56,10 @@ function Head({ first, showLeads }: { first: string; showLeads?: boolean }) {
         <th>{first}</th>
         {showLeads && <th className="tnum">Leads</th>}
         <th className="tnum">Registered</th>
-        <th className="tnum">Appeared</th>
-        <th className="tnum">Appeared %</th>
-        <th className="tnum">Did not appear</th>
-        <th className="tnum">No status yet</th>
+        <th className="tnum">Gave test</th>
+        <th className="tnum">Gave test %</th>
+        <th className="tnum">Did not give test</th>
+        <th className="tnum">Not known yet</th>
       </tr>
     </thead>
   );
@@ -78,26 +78,26 @@ export default function TestAttendanceBlock({ data, qs }: { data: Attendance; qs
     <section className="grid mb">
       <div className="card">
         <header>
-          <h3>Test attendance · CSAT-1</h3>
+          <h3>Test given · CSAT-1</h3>
           <span className="cap">
-            all CSAT-1 · share of registrations, not of leads{stamp ? ` · as of last sync, ${stamp}` : ""}
+            all CSAT-1 · out of registered students, not all leads{stamp ? ` · as of last sync, ${stamp}` : ""}
           </span>
         </header>
 
         <div className="ta-tiles">
           <div className="ta-tile">
             <div className="ta-n tnum">{nf(all.given)}</div>
-            <div className="ta-l">Appeared <span className="ta-dim">{pct(all.given, all.registered)} of {nf(all.registered)} registered</span></div>
+            <div className="ta-l">Gave the test <span className="ta-dim">{pct(all.given, all.registered)} of {nf(all.registered)} registered</span></div>
           </div>
           <div className="ta-tile ta-bad">
             <div className="ta-n tnum">
               <Link href={`/drill?${qs}&tg=noshow`} className="sb-link">{nf(all.noShow)}</Link>
             </div>
-            <div className="ta-l">Registered, did not appear <span className="ta-dim">{pct(all.noShow, all.registered)} of registrations</span></div>
+            <div className="ta-l">Registered but did not give the test <span className="ta-dim">{pct(all.noShow, all.registered)} of registered</span></div>
           </div>
           <div className="ta-tile">
             <div className="ta-n tnum">{nf(all.noStatus)}</div>
-            <div className="ta-l">No status yet <span className="ta-dim">not a no-show, just unknown</span></div>
+            <div className="ta-l">Not known yet <span className="ta-dim">no status on the sheet, so we cannot say</span></div>
           </div>
         </div>
 
@@ -127,10 +127,10 @@ export default function TestAttendanceBlock({ data, qs }: { data: Attendance; qs
             <p className="ta-foot">
               A lead can arrive through more than one route, and those cells hold several
               comma-separated values, so every source on the row is credited.{" "}
-              <b>This table double counts on purpose and does not add up to {nf(all.registered)} registrations.</b>{" "}
-              Compare sources on Appeared %, not on Appeared: Influencers tops any raw count because it is
-              {" "}{pct(bySource[0]?.registered ?? 0, all.registered)} of the volume. A dash means the source
-              produced leads but no registrations, so a test status was never possible.
+              <b>The same student can be counted twice here, so this table will not add up to {nf(all.registered)}.</b>{" "}
+              Compare sources on Gave test %, not on the count: Influencers tops any count because it is
+              {" "}{pct(bySource[0]?.registered ?? 0, all.registered)} of the volume. A dash means that source
+              brought leads but no registrations, so there was never a test to give.
             </p>
           </>
         )}
@@ -148,10 +148,10 @@ export default function TestAttendanceBlock({ data, qs }: { data: Attendance; qs
               </table>
             </div>
             <p className="ta-foot">
-              Sorted by Appeared %, not by volume, because the two disagree. Names with fewer than{" "}
-              {minUtmReg} registrations are left out, or a name with 2 registrations and 1 appearance
-              would lead on 50%. Placeholder values like &quot;(not set)&quot; and &quot;none&quot; are not
-              campaign names and are excluded. <b>Multi-value cells are split, so this table double counts too.</b>
+              Sorted by Gave test %, not by volume, because the two disagree. Names with fewer than{" "}
+              {minUtmReg} registrations are left out, or a name with 2 registrations and 1 test given would sit
+              on top at 50%. Values like &quot;(not set)&quot; and &quot;none&quot; are not campaign names, so they
+              are left out. <b>A student can be counted under two names here as well.</b>
             </p>
           </>
         )}
@@ -160,7 +160,7 @@ export default function TestAttendanceBlock({ data, qs }: { data: Attendance; qs
 
         {best && worst && best.key !== worst.key && (
           <div className="ta-gap">
-            <b>{best.label}</b> students turn up at {pct(best.given, best.registered)} against{" "}
+            <b>{best.label}</b> students give the test at {pct(best.given, best.registered)} against{" "}
             <b>{worst.label}</b> at {pct(worst.given, worst.registered)}
             {" "}— that gap matters more than the overall {pct(all.given, all.registered)}.
           </div>
@@ -179,11 +179,11 @@ export default function TestAttendanceBlock({ data, qs }: { data: Attendance; qs
           return (
             <div className="ta-gap">
               <b>{biggest.label}</b> brought the most registrations of anyone, {nf(biggest.registered)}, and only{" "}
-              {pct(biggest.given, biggest.registered)} of them sat the test. <b>{rival.label}</b> brought{" "}
-              {nf(rival.registered)} and {pct(rival.given, rival.registered)} sat it — the same effort,{" "}
+              {pct(biggest.given, biggest.registered)} of them gave the test. <b>{rival.label}</b> brought{" "}
+              {nf(rival.registered)} and {pct(rival.given, rival.registered)} gave it — the same effort,{" "}
               {ratio >= 2 ? `more than ${Math.floor(ratio)} times` : "well over"} the yield.
               {zero.length > 0 && (
-                <> {zero.map((z) => `${z.label} brought ${nf(z.registered)} registrations and not one appeared`).join("; ")}.</>
+                <> {zero.map((z) => `${z.label} brought ${nf(z.registered)} registrations and not one gave the test`).join("; ")}.</>
               )}
             </div>
           );

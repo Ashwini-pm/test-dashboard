@@ -1,7 +1,7 @@
 import type { FunnelSeg, ActivityDay } from "@/lib/cohort";
 
 // LEADS, never calls. Nobody asks how many dials were made, they ask how many
-// people we reached — so no call-attempt counts appear here.
+// people we got through to — so no call-attempt counts appear here.
 // The four buckets are mutually exclusive and add back to the lead count.
 const nf = (n: number) => n.toLocaleString("en-IN");
 const pct = (a: number, b: number) => (b > 0 ? `${Math.round((a / b) * 100)}%` : "—");
@@ -59,7 +59,7 @@ export function CallingFunnelBlock({
             </div>
             <div className="kf-arrow">→</div>
             <div className="kf-step">
-              <div className="kf-sl">Touched</div>
+              <div className="kf-sl">Connected</div>
               <div className="kf-sv tnum cv-reg">{nf(all.touched)}</div>
               <div className="kf-sp">{pct(all.touched, all.called)} of called</div>
             </div>
@@ -74,17 +74,17 @@ export function CallingFunnelBlock({
           <Bar
             total={all.leads}
             segs={[
-              { n: all.touched, cls: "kf-touched", title: "Touched" },
-              { n: all.notTouched, cls: "kf-nottouched", title: "Not touched" },
+              { n: all.touched, cls: "kf-touched", title: "Connected" },
+              { n: all.notTouched, cls: "kf-nottouched", title: "Called, no answer" },
               { n: all.notCalled, cls: "kf-notcalled", title: "Not called" },
-              { n: all.noData, cls: "kf-nodata", title: "No calling data" },
+              { n: all.noData, cls: "kf-nodata", title: "Not known" },
             ]}
           />
           <div className="kf-legend">
-            <span><i className="kf-touched" />Touched {nf(all.touched)}</span>
-            <span><i className="kf-nottouched" />Not touched {nf(all.notTouched)}</span>
+            <span><i className="kf-touched" />Connected {nf(all.touched)}</span>
+            <span><i className="kf-nottouched" />Called, no answer {nf(all.notTouched)}</span>
             <span><i className="kf-notcalled" />Not called {nf(all.notCalled)}</span>
-            <span><i className="kf-nodata" />No calling data {nf(all.noData)}</span>
+            <span><i className="kf-nodata" />Not known {nf(all.noData)}</span>
           </div>
 
           {/* three-way split */}
@@ -95,10 +95,10 @@ export function CallingFunnelBlock({
                   <th>Segment</th>
                   <th className="tnum">Leads</th>
                   <th className="tnum">Called</th>
-                  <th className="tnum">Touched</th>
-                  <th className="tnum">Not touched</th>
+                  <th className="tnum">Connected</th>
+                  <th className="tnum">No answer</th>
                   <th className="tnum">Not called</th>
-                  <th className="tnum">No calling data</th>
+                  <th className="tnum">Not known</th>
                 </tr>
               </thead>
               <tbody>
@@ -129,8 +129,8 @@ export function CallingFunnelBlock({
                 <thead>
                   <tr>
                     <th>Program</th><th className="tnum">Leads</th><th className="tnum">Called</th>
-                    <th className="tnum">Touched</th><th className="tnum">Not touched</th>
-                    <th className="tnum">Not called</th><th className="tnum">No calling data</th>
+                    <th className="tnum">Connected</th><th className="tnum">No answer</th>
+                    <th className="tnum">Not called</th><th className="tnum">Not known</th>
                   </tr>
                 </thead>
                 <tbody>

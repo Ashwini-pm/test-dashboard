@@ -8,7 +8,7 @@ const STAGE_NAMES: Record<string, string> = {
   lead: "Not registered",
   registration: "Registered, no test",
   before_test: "Before test",
-  test: "Appeared, result pending",
+  test: "Gave test, result pending",
   result: "Result out (pass/fail)",
   slot_form: "Slot booked",
   counselling: "Counselled",

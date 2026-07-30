@@ -39,7 +39,7 @@ export default async function Comms({ searchParams }: { searchParams: Promise<Re
       <div className="topbar">
         <div>
           <h1>Communication</h1>
-          <div className="sub">{ctx} · who we reached, on which channel, and who has heard nothing</div>
+          <div className="sub">{ctx} · who we got through to, on which channel, and who has heard nothing</div>
         </div>
         <div className="spacer" />
         <RoundSelect options={roundOptions(ctx)} current={round} />
@@ -60,7 +60,7 @@ export default async function Comms({ searchParams }: { searchParams: Promise<Re
         <ChannelSplitBlock
           split={ch}
           qs={dq}
-          note="AI calling runs almost entirely to students who have already registered, as a reminder channel, so the unregistered gap above is a human-calling gap. Figures are as of the last sync, not live to the minute."
+          note="AI calling runs almost entirely to students who have already registered, as a reminder. It barely touches the ones who have not registered, so that gap is a people-calling gap. Numbers are as of the last sync, not live to the minute."
         />
       )}
 

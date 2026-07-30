@@ -28,10 +28,10 @@ export default function CalledVsAppeared({ data, qs }: { data: CalledAppeared; q
   const cxA = cxR + gap;
 
   const rows: { key: string; label: string; n: number; tone?: string }[] = [
-    { key: "both", label: "Reached and appeared", n: both, tone: "cv-reg" },
-    { key: "rns", label: "Reached, did not appear", n: reachedNoShow, tone: "fc-bad" },
-    { key: "aun", label: "Appeared without being reached", n: appearedUnreached },
-    { key: "none", label: "Neither", n: neither, tone: "fc-warn" },
+    { key: "both", label: "Connected and gave the test", n: both, tone: "cv-reg" },
+    { key: "rns", label: "Connected, did not give the test", n: reachedNoShow, tone: "fc-bad" },
+    { key: "aun", label: "Gave the test, never connected", n: appearedUnreached },
+    { key: "none", label: "No call connected, no test", n: neither, tone: "fc-warn" },
   ];
 
   const top = channels[0];
@@ -40,11 +40,11 @@ export default function CalledVsAppeared({ data, qs }: { data: CalledAppeared; q
 
   return (
     <>
-      <h4 className="ta-h">Called vs appeared</h4>
+      <h4 className="ta-h">Calling vs test given</h4>
 
       <div className="ca-wrap">
         <svg className="ca-svg" viewBox={`0 0 ${W} ${H}`} role="img"
-             aria-label={`Of ${total} registered students, ${reached} were reached by calling and ${appeared} appeared; ${both} both, ${neither} neither`}>
+             aria-label={`Of ${total} registered students, ${reached} connected on a call and ${appeared} gave the test; ${both} did both, ${neither} did neither`}>
           {/* the box is the whole registered cohort */}
           <rect x={1} y={1} width={W - 2} height={H - 2} rx={10} className="ca-box" />
           <text x={10} y={17} className="ca-boxlab">All {nf(total)} registered</text>
@@ -54,7 +54,7 @@ export default function CalledVsAppeared({ data, qs }: { data: CalledAppeared; q
 
           {/* reached-only */}
           <text x={cxR - rR * 0.42} y={cy - 2} className="ca-n">{nf(reachedNoShow)}</text>
-          <text x={cxR - rR * 0.42} y={cy + 13} className="ca-t">reached,<tspan x={cxR - rR * 0.42} dy="11">no show</tspan></text>
+          <text x={cxR - rR * 0.42} y={cy + 13} className="ca-t">connected,<tspan x={cxR - rR * 0.42} dy="11">no test</tspan></text>
 
           {/* overlap */}
           <text x={cxA - rA * 0.15} y={cy + 1} className="ca-n ca-n-sm">{nf(both)}</text>
@@ -63,16 +63,16 @@ export default function CalledVsAppeared({ data, qs }: { data: CalledAppeared; q
           {/* appeared-only: a thin crescent, so label it outside with a leader */}
           <line x1={cxA + rA + 2} y1={cy - rA * 0.55} x2={cxA + rA + 26} y2={cy - rA - 16} className="ca-lead" />
           <text x={cxA + rA + 28} y={cy - rA - 18} className="ca-n ca-n-sm">{nf(appearedUnreached)}</text>
-          <text x={cxA + rA + 28} y={cy - rA - 6} className="ca-t">appeared,<tspan x={cxA + rA + 28} dy="11">never reached</tspan></text>
+          <text x={cxA + rA + 28} y={cy - rA - 6} className="ca-t">gave test,<tspan x={cxA + rA + 28} dy="11">never called</tspan></text>
 
           {/* neither: outside both circles, in the corner of the box */}
           <text x={W - 12} y={H - 26} className="ca-n ca-n-sm" textAnchor="end">{nf(neither)}</text>
-          <text x={W - 12} y={H - 14} className="ca-t" textAnchor="end">neither</text>
+          <text x={W - 12} y={H - 14} className="ca-t" textAnchor="end">no call, no test</text>
         </svg>
 
         <div className="ca-key">
-          <span><i className="ca-sw-reached" />Reached by calling {nf(reached)}</span>
-          <span><i className="ca-sw-appeared" />Appeared {nf(appeared)}</span>
+          <span><i className="ca-sw-reached" />Connected on a call {nf(reached)}</span>
+          <span><i className="ca-sw-appeared" />Gave the test {nf(appeared)}</span>
         </div>
       </div>
 
@@ -98,15 +98,15 @@ export default function CalledVsAppeared({ data, qs }: { data: CalledAppeared; q
         </table>
       </div>
 
-      <h4 className="ta-h">Appeared, by which channel reached them</h4>
+      <h4 className="ta-h">Test given, by who called them</h4>
       <div className="cv-scroll">
         <table className="cv-table ta-table">
           <thead>
             <tr>
-              <th>Reached by</th>
+              <th>Connected by</th>
               <th className="tnum">Registered</th>
-              <th className="tnum">Appeared</th>
-              <th className="tnum">Appeared %</th>
+              <th className="tnum">Gave test</th>
+              <th className="tnum">Gave test %</th>
             </tr>
           </thead>
           <tbody>
@@ -124,25 +124,24 @@ export default function CalledVsAppeared({ data, qs }: { data: CalledAppeared; q
 
       {top && bottom && top.key !== bottom.key && (
         <div className="ta-gap">
-          Calling moves the needle, but only when both channels reach the same student:{" "}
-          <b>{pct(top.appeared, top.registered)}</b> of those reached by {top.label.toLowerCase()} appeared,
-          against <b>{pct(bottom.appeared, bottom.registered)}</b> of those {bottom.label.toLowerCase()} reached.
-          {aiOnly && ` AI alone lands at ${pct(aiOnly.appeared, aiOnly.registered)}, barely above doing nothing.`}
+          Calling works, but only when both AI and a person get through to the same student:{" "}
+          <b>{pct(top.appeared, top.registered)}</b> of the students {top.label.toLowerCase()} connected with gave the test,
+          against <b>{pct(bottom.appeared, bottom.registered)}</b> of the ones nobody got through to.
+          {aiOnly && ` AI on its own gets ${pct(aiOnly.appeared, aiOnly.registered)}, barely better than no call at all.`}
           <br />
-          <b>{nf(reachedNoShow)}</b> registered students were reached by calling and still did not sit the test —
-          the largest single segment, which says the problem is not reach.
+          <b>{nf(reachedNoShow)}</b> students registered, we got through to them on a call, and they still did not give
+          the test — the biggest group of the four. So the problem is not that we cannot reach them.
         </div>
       )}
 
       <p className="ta-foot">
-        Registered students only: an unregistered lead was never due to sit the test.
-        Both reach signals are cumulative to date rather than &quot;called before the test&quot;, so read this as
-        association, not proof that calling caused attendance. The four Venn regions are mutually exclusive and
-        add to {nf(total)}; so do the four channel segments. Circle areas are proportional to the set sizes and
-        the overlap is indicative.
+        Registered students only, since nobody else was due to give the test. Calls counted here are every call to date,
+        not only calls made before the test day, so this shows what goes together, not what caused what. The four
+        groups do not overlap and add up to {nf(total)}, and so do the four rows below. Circle sizes follow the
+        numbers; the overlap is indicative.
       </p>
       <p className="ta-foot">
-        <Link href={`/drill?${qs}&tg=noshow`} className="sb-link">Open the students who registered and did not appear</Link>
+        <Link href={`/drill?${qs}&tg=noshow`} className="sb-link">Open the list of registered students who did not give the test</Link>
       </p>
     </>
   );

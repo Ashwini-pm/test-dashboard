@@ -736,11 +736,11 @@ export function leaks(ctx: Ctx, round?: string | null): Leak[] {
   const c = (k: string) => q(`SELECT COUNT(*) n FROM leads l WHERE ${leakWhere(k, inc)}`);
   const defs: [string, string, string, Leak["tone"]][] = [
     ["pass_no_slot", "Passed, no counselling slot", "cleared the test but nobody booked them", "bad"],
-    ["slot_no_outcome", "Slot passed, no outcome", "slot day is gone and the panelist never responded", "warn"],
+    ["slot_no_outcome", "Slot day gone, no outcome", "the slot day passed and the panelist never responded", "warn"],
     ["held_no_offer", `Counselled ${SLA.heldToOffer}+ days, no offer`, "said yes to us, offer still not launched", "bad"],
-    ["offer_expiring", `Offer ${SLA.offerToSeat}+ days old, unbooked`, "offer window lapsing without a seat", "bad"],
-    ["no_show_open", "No-show / reschedule, open", "missed counselling and nothing rebooked yet", "warn"],
-    ["untouched_48h", "Passed + silent 48h", "no call, no session, nothing in two days", "bad"],
+    ["offer_expiring", `Offer ${SLA.offerToSeat}+ days old, no seat`, "offer window lapsing without a seat", "bad"],
+    ["no_show_open", "Missed counselling, not rebooked", "did not attend and nothing booked again yet", "warn"],
+    ["untouched_48h", "Passed, nothing done for 48h", "no call, no session, nothing in two days", "bad"],
   ];
   return defs.map(([key, title, desc, tone]) => ({ key, title, desc, tone, count: c(key) }));
 }

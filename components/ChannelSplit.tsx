@@ -34,7 +34,7 @@ function Venn({ row }: { row: ChannelRow }) {
   return (
     <div className="cs-venn">
       <svg viewBox={`0 0 ${W} ${H}`} role="img"
-           aria-label={`AI reached ${ai}, human reached ${hu}, both ${row.both}`}>
+           aria-label={`AI connected with ${ai}, a person connected with ${hu}, both ${row.both}`}>
         <circle cx={xA} cy={cy} r={rA} className="cs-c-ai" />
         <circle cx={xH} cy={cy} r={rH} className="cs-c-hu" />
         <text x={xA - rA * 0.35} y={cy + 4} className="cs-vlab">{nf(row.aiOnly)}</text>
@@ -42,8 +42,8 @@ function Venn({ row }: { row: ChannelRow }) {
         {row.both > 0 && <text x={cx} y={cy + 4} className="cs-vlab cs-vboth">{nf(row.both)}</text>}
       </svg>
       <div className="cs-vkey">
-        <span><i className="cs-sw-ai" />AI reached {nf(ai)}</span>
-        <span><i className="cs-sw-hu" />Human reached {nf(hu)}</span>
+        <span><i className="cs-sw-ai" />AI connected {nf(ai)}</span>
+        <span><i className="cs-sw-hu" />Person connected {nf(hu)}</span>
         <span><i className="cs-sw-both" />Both {nf(row.both)}</span>
       </div>
     </div>
@@ -74,11 +74,11 @@ export default function ChannelSplitBlock({
           <div className="cs-figs">
             <div className="cs-fig">
               <div className="cs-n tnum">{nf(reachedAny)}</div>
-              <div className="cs-l">Reached by anyone <span className="cs-dim">{pct(reachedAny, all.total)} of {nf(all.total)}</span></div>
+              <div className="cs-l">We got through to <span className="cs-dim">{pct(reachedAny, all.total)} of {nf(all.total)}</span></div>
             </div>
             <div className="cs-fig cs-fig-bad">
               <div className="cs-n tnum">{nf(nobody)}</div>
-              <div className="cs-l">Reached by nobody <span className="cs-dim">{pct(nobody, all.total)} of {nf(all.total)}</span></div>
+              <div className="cs-l">Nobody got through to <span className="cs-dim">{pct(nobody, all.total)} of {nf(all.total)}</span></div>
             </div>
           </div>
         </div>
@@ -117,8 +117,8 @@ export default function ChannelSplitBlock({
           const aiTouched = un.both + un.aiOnly;
           return (
             <div className="cs-gap">
-              <b>{nf(un.nobody)}</b> of {nf(un.total)} unregistered leads ({pct(un.nobody, un.total)}) have heard from
-              nobody. AI has reached just <b>{nf(aiTouched)}</b> of them.
+              <b>{nf(un.nobody)}</b> of {nf(un.total)} leads who have not registered ({pct(un.nobody, un.total)}) have heard from
+              nobody at all. AI has got through to just <b>{nf(aiTouched)}</b> of them.
             </div>
           );
         })()}
