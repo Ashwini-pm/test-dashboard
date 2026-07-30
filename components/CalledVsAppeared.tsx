@@ -27,11 +27,11 @@ export default function CalledVsAppeared({ data, qs }: { data: CalledAppeared; q
   const cxR = PAD + 34 + rR;
   const cxA = cxR + gap;
 
-  const rows: { key: string; label: string; n: number; tone?: string }[] = [
-    { key: "both", label: "Connected and gave the test", n: both, tone: "cv-reg" },
-    { key: "rns", label: "Connected, did not give the test", n: reachedNoShow, tone: "fc-bad" },
-    { key: "aun", label: "Gave the test, never connected", n: appearedUnreached },
-    { key: "none", label: "No call connected, no test", n: neither, tone: "fc-warn" },
+  const rows: { key: string; label: string; n: number; tone?: string; drill: string }[] = [
+    { key: "both", label: "Connected and gave the test", n: both, tone: "cv-reg", drill: "reach=any&tg=given" },
+    { key: "rns", label: "Connected, did not give the test", n: reachedNoShow, tone: "fc-bad", drill: "reach=any&tg=notgiven" },
+    { key: "aun", label: "Gave the test, never connected", n: appearedUnreached, drill: "reach=none&tg=given" },
+    { key: "none", label: "No call connected, no test", n: neither, tone: "fc-warn", drill: "reach=none&tg=notgiven" },
   ];
 
   const top = channels[0];
@@ -53,20 +53,28 @@ export default function CalledVsAppeared({ data, qs }: { data: CalledAppeared; q
           <circle cx={cxA} cy={cy} r={rA} className="ca-c-appeared" />
 
           {/* reached-only */}
-          <text x={cxR - rR * 0.42} y={cy - 2} className="ca-n">{nf(reachedNoShow)}</text>
+          <a href={`/drill?${qs}&reach=any&tg=notgiven`}>
+            <text x={cxR - rR * 0.42} y={cy - 2} className="ca-n ca-link">{nf(reachedNoShow)}</text>
+          </a>
           <text x={cxR - rR * 0.42} y={cy + 13} className="ca-t">connected,<tspan x={cxR - rR * 0.42} dy="11">no test</tspan></text>
 
           {/* overlap */}
-          <text x={cxA - rA * 0.15} y={cy + 1} className="ca-n ca-n-sm">{nf(both)}</text>
+          <a href={`/drill?${qs}&reach=any&tg=given`}>
+            <text x={cxA - rA * 0.15} y={cy + 1} className="ca-n ca-n-sm ca-link">{nf(both)}</text>
+          </a>
           <text x={cxA - rA * 0.15} y={cy + 13} className="ca-t">both</text>
 
           {/* appeared-only: a thin crescent, so label it outside with a leader */}
           <line x1={cxA + rA + 2} y1={cy - rA * 0.55} x2={cxA + rA + 26} y2={cy - rA - 16} className="ca-lead" />
-          <text x={cxA + rA + 28} y={cy - rA - 18} className="ca-n ca-n-sm">{nf(appearedUnreached)}</text>
+          <a href={`/drill?${qs}&reach=none&tg=given`}>
+            <text x={cxA + rA + 28} y={cy - rA - 18} className="ca-n ca-n-sm ca-link">{nf(appearedUnreached)}</text>
+          </a>
           <text x={cxA + rA + 28} y={cy - rA - 6} className="ca-t">gave test,<tspan x={cxA + rA + 28} dy="11">never called</tspan></text>
 
           {/* neither: outside both circles, in the corner of the box */}
-          <text x={W - 12} y={H - 26} className="ca-n ca-n-sm" textAnchor="end">{nf(neither)}</text>
+          <a href={`/drill?${qs}&reach=none&tg=notgiven`}>
+            <text x={W - 12} y={H - 26} className="ca-n ca-n-sm ca-link" textAnchor="end">{nf(neither)}</text>
+          </a>
           <text x={W - 12} y={H - 14} className="ca-t" textAnchor="end">no call, no test</text>
         </svg>
 
@@ -84,14 +92,16 @@ export default function CalledVsAppeared({ data, qs }: { data: CalledAppeared; q
           <tbody>
             {rows.map((r) => (
               <tr key={r.key}>
-                <td>{r.label}</td>
-                <td className={`tnum${r.tone ? ` ${r.tone}` : ""}`}>{nf(r.n)}</td>
+                <td><Link href={`/drill?${qs}&${r.drill}`} className="sb-link">{r.label}</Link></td>
+                <td className={`tnum${r.tone ? ` ${r.tone}` : ""}`}>
+                  <Link href={`/drill?${qs}&${r.drill}`} className="sb-link">{nf(r.n)}</Link>
+                </td>
                 <td className="tnum">{pct(r.n, total)}</td>
               </tr>
             ))}
             <tr className="co-strong">
-              <td>All registered</td>
-              <td className="tnum">{nf(total)}</td>
+              <td><Link href={`/drill?${qs}&reg=paid`} className="sb-link">All registered</Link></td>
+              <td className="tnum"><Link href={`/drill?${qs}&reg=paid`} className="sb-link">{nf(total)}</Link></td>
               <td className="tnum">100%</td>
             </tr>
           </tbody>
@@ -112,9 +122,15 @@ export default function CalledVsAppeared({ data, qs }: { data: CalledAppeared; q
           <tbody>
             {channels.map((c) => (
               <tr key={c.key}>
-                <td>{c.label}</td>
-                <td className="tnum">{nf(c.registered)}</td>
-                <td className="tnum cv-reg">{nf(c.appeared)}</td>
+                <td><Link href={`/drill?${qs}&reg=paid&ch=${c.key}`} className="sb-link">{c.label}</Link></td>
+                <td className="tnum">
+                  <Link href={`/drill?${qs}&reg=paid&ch=${c.key}`} className="sb-link">{nf(c.registered)}</Link>
+                </td>
+                <td className="tnum cv-reg">
+                  {c.appeared > 0
+                    ? <Link href={`/drill?${qs}&ch=${c.key}&tg=given`} className="sb-link">{nf(c.appeared)}</Link>
+                    : nf(c.appeared)}
+                </td>
                 <td className="tnum ca-pct">{pct(c.appeared, c.registered)}</td>
               </tr>
             ))}

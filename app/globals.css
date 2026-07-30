@@ -1569,3 +1569,5 @@ table.list tbody tr:hover td {
 .ca-sw-reached  { background: var(--blue); opacity: .6; }
 .ca-sw-appeared { background: var(--green); opacity: .7; }
 .ca-pct { font-weight: 700; }
+.ca-link { cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
+.ca-svg a:hover .ca-link { fill: var(--primary-2); }

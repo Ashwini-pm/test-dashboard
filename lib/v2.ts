@@ -505,6 +505,8 @@ export interface DrillParams {
   couns?: string[] | null; // counsellor names, or "__none__" for unassigned — multi-select
   tg?: string | null;      // CSAT-1 test attendance: given | noshow | nostatus
   tag?: string | null;     // "src:organic" | "utm:vedantu_yt_bca" (comma-split tag)
+  reach?: string | null;   // CSAT-1 call reach: "any" (AI or person connected) | "none"
+  ch?: string | null;      // CSAT-1 channel that connected: both | hu | ai | no
 }
 
 // Distinct values for the filter dropdowns on the drill page.
@@ -598,12 +600,30 @@ export function drill(ctx: Ctx, round: string | null | undefined, p: DrillParams
     else { w.push(`m.signup_programs = '${esc(p.sprog)}'`); bits.push(p.sprog); }
   }
   // post-test stages live in the stage tables, not the map: match via leads.
-  // CSAT-1 test attendance. nostatus is deliberately its own filter: it is
-  // missing information, not a no-show.
+  // CSAT-1 test status. "nostatus" stays its own filter: no status on the sheet is
+  // missing information, not a skipped test. "notgiven" is the union of the two,
+  // which is what the calling-vs-test-given table counts as "no test".
   if (p.tg && m.table === "csat_map") {
-    if (p.tg === "given")    { w.push("m.registered='paid' AND m.test_given='Test_Given'"); bits.push("sat the test"); }
-    if (p.tg === "noshow")   { w.push("m.registered='paid' AND m.test_given='Test_Not_Appear'"); bits.push("registered, did not appear"); }
-    if (p.tg === "nostatus") { w.push("m.registered='paid' AND nullif(m.test_given,'') IS NULL"); bits.push("registered, no test status yet"); }
+    if (p.tg === "given")    { w.push("m.registered='paid' AND m.test_given='Test_Given'"); bits.push("gave the test"); }
+    if (p.tg === "noshow")   { w.push("m.registered='paid' AND m.test_given='Test_Not_Appear'"); bits.push("registered, did not give the test"); }
+    if (p.tg === "nostatus") { w.push("m.registered='paid' AND nullif(m.test_given,'') IS NULL"); bits.push("registered, test status not known"); }
+    if (p.tg === "notgiven") { w.push("m.registered='paid' AND coalesce(m.test_given,'') <> 'Test_Given'"); bits.push("registered, no test given"); }
+  }
+  // Did a call ever connect — by a person or by the AI agent. Same definition the
+  // calling-vs-test-given block uses, so the counts match what is on screen.
+  const CSAT_CONNECTED =
+    "(coalesce(m.connected_calls,0) > 0 OR m.lead_id IN (SELECT lead_id FROM ai_reach WHERE cohort='CSAT-1' AND reached=1))";
+  if (p.reach && m.table === "csat_map") {
+    if (p.reach === "any")  { w.push(CSAT_CONNECTED); bits.push("a call connected"); }
+    if (p.reach === "none") { w.push(`NOT ${CSAT_CONNECTED}`); bits.push("no call ever connected"); }
+  }
+  if (p.ch && m.table === "csat_map") {
+    const HU = "coalesce(m.connected_calls,0) > 0";
+    const AI = "m.lead_id IN (SELECT lead_id FROM ai_reach WHERE cohort='CSAT-1' AND reached=1)";
+    if (p.ch === "both") { w.push(`${HU} AND ${AI}`); bits.push("AI and a person both connected"); }
+    if (p.ch === "hu")   { w.push(`${HU} AND NOT (${AI})`); bits.push("only a person connected"); }
+    if (p.ch === "ai")   { w.push(`${AI} AND NOT (${HU})`); bits.push("only AI connected"); }
+    if (p.ch === "no")   { w.push(`NOT (${HU}) AND NOT (${AI})`); bits.push("nobody connected"); }
   }
   // Comma-split source / UTM value, matched through csat_tag so the count always
   // equals what the attendance table shows (both read the same split).
