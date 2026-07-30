@@ -97,7 +97,11 @@ export function stageCounts(ctx: Ctx, round?: string | null): StageCounts {
       ? q(`SELECT COUNT(*) n FROM ${mu.table} WHERE registered='paid'${mu.where}`)
       : q(`SELECT COUNT(DISTINCT lead_id) n FROM registrations WHERE nsat_round IN (${inc})`),
     // Pass and Fail both land on the map now, so appeared = anyone with a result
-    appeared: n4 ? n4Appeared : q(jl("test_results", " AND x.appeared=1")),
+    appeared: n4
+      ? n4Appeared
+      : ctx === "CSAT" && mu?.table === "csat_map"
+        ? q(`SELECT COUNT(*) n FROM csat_map WHERE registered='paid' AND test_given='Test_Given'${mu.where}`)
+        : q(jl("test_results", " AND x.appeared=1")),
     pass: n4 ? fromN4("test_result = 'Pass'") : q(jl("test_results", " AND x.result='pass'")),
     fail: n4 ? fromN4("test_result = 'Fail'") : q(jl("test_results", " AND x.result='fail'")),
     // NSAT-4 slots come from nsat4_counselling; it has no attendance column, so
@@ -499,6 +503,7 @@ export interface DrillParams {
   cprog?: string | null;   // CRM-assigned program (BBA/BCA/...); "__none__" = CRM has none
   sprog?: string | null;   // program the student picked on the page; "__none__" = never signed up
   couns?: string[] | null; // counsellor names, or "__none__" for unassigned — multi-select
+  tg?: string | null;      // CSAT-1 test attendance: given | noshow | nostatus
 }
 
 // Distinct values for the filter dropdowns on the drill page.
@@ -592,6 +597,13 @@ export function drill(ctx: Ctx, round: string | null | undefined, p: DrillParams
     else { w.push(`m.signup_programs = '${esc(p.sprog)}'`); bits.push(p.sprog); }
   }
   // post-test stages live in the stage tables, not the map: match via leads.
+  // CSAT-1 test attendance. nostatus is deliberately its own filter: it is
+  // missing information, not a no-show.
+  if (p.tg && m.table === "csat_map") {
+    if (p.tg === "given")    { w.push("m.registered='paid' AND m.test_given='Test_Given'"); bits.push("sat the test"); }
+    if (p.tg === "noshow")   { w.push("m.registered='paid' AND m.test_given='Test_Not_Appear'"); bits.push("registered, did not appear"); }
+    if (p.tg === "nostatus") { w.push("m.registered='paid' AND nullif(m.test_given,'') IS NULL"); bits.push("registered, no test status yet"); }
+  }
   if (p.pstage && m.table === "nsat4_map") {
     if (p.pstage === "test") { w.push("nullif(m.test_result,'') IS NOT NULL"); bits.push("test given"); }
     if (p.pstage === "pass") { w.push("m.test_result = 'Pass'"); bits.push("test passed"); }

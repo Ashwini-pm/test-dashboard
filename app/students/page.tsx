@@ -2,6 +2,8 @@ import Link from "next/link";
 import { ensureFresh } from "@/lib/db";
 import { parseCtx, students, leaks, intentSummary, roundOptions, defaultRound } from "@/lib/v2";
 import RoundSelect from "@/components/RoundSelect";
+import { csatAttendance } from "@/lib/channels";
+import TestAttendanceBlock from "@/components/TestAttendance";
 
 export const dynamic = "force-dynamic";
 // cold-start hydrate pulls ~20 tables; the default 10s limit was too tight
@@ -20,6 +22,12 @@ export default async function Students({ searchParams }: { searchParams: Promise
   const { rows } = students(ctx, filter, round);
   const L = leaks(ctx, round);
   const I = intentSummary(ctx, round);
+  // CSAT-1 test attendance (lead_map.test_given). Deliberately NOT scoped to the
+  // round pill: the programme split (from signup_programs, what the student
+  // picked) is the breakdown that matters here, and scoping to a signup page as
+  // well would give two different splits of the same cohort.
+  const attend = ctx === "CSAT" ? csatAttendance() : null;
+  const dq = `${ctx === "CSAT" ? "ctx=CSAT&" : ""}round=All`;
 
   const chips: { key: string | null; label: string; n: number }[] = [
     { key: null, label: "All", n: -1 },
@@ -39,6 +47,8 @@ export default async function Students({ searchParams }: { searchParams: Promise
         <RoundSelect options={roundOptions(ctx)} current={round} />
         <span className="pill"><span className="dot" /> {nf(rows.length)} students</span>
       </div>
+
+      {attend && <TestAttendanceBlock data={attend} qs={dq} />}
       <div className="chips">
         {chips.map((c) => (
           <Link key={c.label} href={`/students?${c.key ? `filter=${c.key}` : ""}${qs}`.replace("?&", "?")}

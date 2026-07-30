@@ -165,3 +165,91 @@ export function channelCohortForRound(
   if (round === "NSAT-4") return { cohort: "NSAT-4", where: "", scope: "all NSAT-4" };
   return null; // no AI-call mapping for NSAT-2 / 3 / 5
 }
+
+// ---------------------------------------------------------------------------
+// CSAT-1 test attendance (lead_map.test_given)
+//
+// Test_Given      sat the test
+// Test_Not_Appear registered for it and did not sit it   <- the actionable number
+// NULL            no status on record yet                <- NOT a no-show
+//
+// The last two are never merged: one says the student skipped, the other says we
+// do not know. Attendance is a share of REGISTRATIONS, since an unregistered lead
+// was never due to sit the test.
+// ---------------------------------------------------------------------------
+
+export interface AttendRow {
+  key: string;
+  label: string;
+  registered: number;
+  given: number;
+  noShow: number;
+  noStatus: number;
+  /** raw signup_programs value, for the &sprog= drill; absent on the total row */
+  prog?: string;
+}
+
+export interface Attendance {
+  all: AttendRow;
+  byProgramme: AttendRow[];
+  /** max(test_given_at) — this feed moves in batches, not continuously */
+  lastSync: string | null;
+}
+
+function attendRow(key: string, label: string, where: string): AttendRow {
+  const r = db
+    .prepare(
+      `SELECT COUNT(*) reg,
+              SUM(CASE WHEN test_given='Test_Given' THEN 1 ELSE 0 END) g,
+              SUM(CASE WHEN test_given='Test_Not_Appear' THEN 1 ELSE 0 END) ns,
+              SUM(CASE WHEN nullif(test_given,'') IS NULL THEN 1 ELSE 0 END) unk
+         FROM csat_map WHERE registered='paid'${where}`
+    )
+    .get() as Record<string, number>;
+  return {
+    key,
+    label,
+    registered: Number(r?.reg ?? 0),
+    given: Number(r?.g ?? 0),
+    noShow: Number(r?.ns ?? 0),
+    noStatus: Number(r?.unk ?? 0),
+  };
+}
+
+export function csatAttendance(where = ""): Attendance | null {
+  if (!tableReady("csat_map")) return null;
+  let cols: { name: string }[] = [];
+  try {
+    cols = db.prepare("PRAGMA table_info(csat_map)").all() as { name: string }[];
+  } catch {
+    return null;
+  }
+  if (!cols.some((c) => c.name === "test_given")) return null;
+
+  const all = attendRow("all", "All CSAT-1", where);
+  if (all.registered === 0) return null;
+
+  // signup_programs holds 'BBA', 'BCA' or 'BBA,BCA' — the student's own choice
+  const progs = db
+    .prepare(
+      `SELECT coalesce(nullif(signup_programs,''),'(no signup)') p, COUNT(*) n
+         FROM csat_map WHERE registered='paid'${where} GROUP BY 1 ORDER BY n DESC`
+    )
+    .all() as { p: string; n: number }[];
+
+  const label = (p: string) => (p === "BBA,BCA" ? "BBA + BCA" : p);
+  const byProgramme = progs.map((r) => ({
+    ...attendRow(
+      `prog_${r.p}`,
+      label(r.p),
+      `${where} AND coalesce(nullif(signup_programs,''),'(no signup)') = '${r.p.replace(/'/g, "''")}'`
+    ),
+    prog: r.p === "(no signup)" ? "__none__" : r.p,
+  }));
+
+  const ls = db
+    .prepare(`SELECT max(test_given_at) d FROM csat_map WHERE nullif(test_given_at,'') IS NOT NULL`)
+    .get() as { d: string | null } | undefined;
+
+  return { all, byProgramme, lastSync: ls?.d ?? null };
+}

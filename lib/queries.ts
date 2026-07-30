@@ -636,9 +636,20 @@ function funnelN3(round: Round = "NSAT-3", src?: Src): FunnelResult {
   // NSAT-4 carries the test outcome on its lead map (test_result); the base
   // test_results table has no NSAT-4 rows. Both Pass and Fail are recorded now,
   // so appeared = anyone with a result, and pass/fail are read straight off it.
+  // CSAT-1 records attendance on the lead map as test_given. Test_Not_Appear
+  // (registered, did not sit it) and NULL (no status yet) are kept apart on
+  // purpose: one is a no-show, the other is missing information.
+  const useCsatTest = CSAT_ROUND_SET.has(round) && csatMapReady();
+  const csatTest = (cond: string) =>
+    c(`SELECT COUNT(*) n FROM csat_map WHERE round_tag IN (${inc}) AND registered='paid' AND ${cond}`);
+  const tGiven = useCsatTest ? csatTest("test_given='Test_Given'") : 0;
+  const tNoShow = useCsatTest ? csatTest("test_given='Test_Not_Appear'") : 0;
+  const tNoStatus = useCsatTest ? csatTest("nullif(test_given,'') IS NULL") : 0;
   const appeared = useN4
     ? c(`SELECT COUNT(*) n FROM nsat4_map WHERE nullif(test_result,'') IS NOT NULL`)
-    : c(`SELECT COUNT(*) n FROM test_results x ${jl(" AND x.appeared=1")}`);
+    : useCsatTest
+      ? tGiven
+      : c(`SELECT COUNT(*) n FROM test_results x ${jl(" AND x.appeared=1")}`);
   const passed = useN4
     ? c(`SELECT COUNT(*) n FROM nsat4_map WHERE test_result = 'Pass'`)
     : c(`SELECT COUNT(*) n FROM test_results x ${jl(" AND x.result='pass'")}`);
@@ -721,7 +732,25 @@ function funnelN3(round: Round = "NSAT-3", src?: Src): FunnelResult {
   progSplit("lead", "");
   main("registration", "Registration", reg, "no registration feed");
   progSplit("registration", " AND registered='paid'");
-  main("test", "Test", appeared, "awaiting exam feed");
+  if (useCsatTest) {
+    // share of REGISTRATIONS, not leads: an unregistered lead was never due to
+    // sit the test, so counting them in the denominator understates attendance.
+    const pctReg = reg > 0 ? (appeared / reg) * 100 : 0;
+    rows.push({
+      key: "test",
+      label: "Test given",
+      count: appeared,
+      pct: pctReg,
+      drop: null,
+      note:
+        `${reg.toLocaleString("en-IN")} registered · ${appeared.toLocaleString("en-IN")} appeared · ` +
+        `${tNoShow.toLocaleString("en-IN")} did not appear · ${tNoStatus.toLocaleString("en-IN")} no status yet` +
+        ` · ${Math.round(pctReg)}% of registrations`,
+    });
+    prev = pctReg;
+  } else {
+    main("test", "Test", appeared, "awaiting exam feed");
+  }
   // Detail nested under Test (revealed by the chevron): AI calling, attending, result.
   const waveCount = int(
     db.prepare(`SELECT COUNT(DISTINCT calling_wave) n FROM call_logs WHERE nsat_round IN (${inc})`).get() as any
