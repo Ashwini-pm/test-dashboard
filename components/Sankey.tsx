@@ -28,23 +28,32 @@ export default function Sankey({ root, qs }: { root: SNode; qs?: string }) {
       if (n.children && open.has(n.id)) for (const c of n.children) walk(c, depth + 1, p);
     };
     walk(root, 0);
-    // per-column vertical stacking, height ∝ n (per-column scale keeps it fitting)
+    // ONE scale for the whole diagram, anchored on the root, so a box's height
+    // means the same thing in every column. Scaling per column (the old way) made
+    // a 387-student box as tall as a 5,284-student box, which is not a sankey.
+    const GAP = 12;
+    const MIN_H = 22; // still legible when the count is tiny
+    const scale = (H - PAD * 2) / Math.max(1, root.n);
     for (const col of cols) {
-      const total = col.reduce((s, p) => s + Math.max(1, p.node.n), 0);
-      const avail = H - PAD * 2 - (col.length - 1) * 14;
-      let y = PAD;
-      for (const p of col) {
-        p.h = Math.max(30, (Math.max(1, p.node.n) / total) * avail);
-        p.y = y;
-        y += p.h + 14;
+      const raw = col.map((p) => Math.max(MIN_H, p.node.n * scale));
+      // a column can only overflow once min-heights kick in; shrink the ones that
+      // have room to give, never the ones already at the floor
+      const need = raw.reduce((s, h) => s + h, 0) + (col.length - 1) * GAP;
+      const avail = H - PAD * 2;
+      if (need > avail) {
+        const slackTotal = raw.reduce((s, h) => s + Math.max(0, h - MIN_H), 0);
+        const cut = need - avail;
+        if (slackTotal > 0) {
+          for (let i = 0; i < raw.length; i++) {
+            const slack = Math.max(0, raw[i] - MIN_H);
+            raw[i] -= (slack / slackTotal) * Math.min(cut, slackTotal);
+          }
+        }
       }
-      // if overflow, squeeze
-      const over = y - 14 + PAD - H;
-      if (over > 0) {
-        const k = (H - PAD * 2 - (col.length - 1) * 14) / (y - 14 - PAD);
-        let yy = PAD;
-        for (const p of col) { p.h = Math.max(24, p.h * k); p.y = yy; yy += p.h + 14; }
-      }
+      // centre the stack vertically so short columns do not hug the top
+      const used = raw.reduce((s, h) => s + h, 0) + (col.length - 1) * GAP;
+      let y = PAD + Math.max(0, (avail - used) / 2);
+      col.forEach((p, i) => { p.h = raw[i]; p.y = y; y += raw[i] + GAP; });
     }
     return cols;
   }, [root, open]);
@@ -85,25 +94,41 @@ export default function Sankey({ root, qs }: { root: SNode; qs?: string }) {
           const isOpen = open.has(p.node.id);
           return (
             <g key={p.node.id} className="sk-node" onClick={() => toggle(p.node)} style={{ cursor: expandable ? "pointer" : "default" }}>
-              <rect x={x} y={p.y} width={NODE_W} height={p.h} rx={10}
+              <rect x={x} y={p.y} width={NODE_W} height={p.h} rx={Math.min(10, p.h / 3)}
                 fill="#fff" stroke={TONE[p.node.tone]} strokeWidth={1.6} />
               <rect x={x} y={p.y} width={5} height={p.h} rx={2.5} fill={TONE[p.node.tone]} />
-              <text x={x + 14} y={p.y + Math.min(20, p.h / 2 - 2)} fontSize={11.5} fontWeight={600} fill="#5a6572">
-                {p.node.label}{expandable ? (isOpen ? "  ▾" : "  ▸") : ""}
-              </text>
-              {p.node.drill && qs ? (
-                <a href={`/drill?${qs}&${p.node.drill}`} onClick={(e) => e.stopPropagation()}>
-                  <title>open the {p.node.n.toLocaleString("en-IN")} students</title>
-                  <text x={x + 14} y={p.y + Math.min(20, p.h / 2 - 2) + 17} fontSize={15} fontWeight={800}
-                    fill="#101828" className="sk-num-link" textDecoration="underline">
-                    {p.node.n.toLocaleString("en-IN")}
-                  </text>
-                </a>
-              ) : (
-                <text x={x + 14} y={p.y + Math.min(20, p.h / 2 - 2) + 17} fontSize={15} fontWeight={800} fill="#101828">
-                  {p.node.n.toLocaleString("en-IN")}
-                </text>
-              )}
+              {/* Heights are now proportional, so a small box has no room for two
+                  lines: label and number share one line and the number right-aligns. */}
+              {(() => {
+                const twoLine = p.h >= 44;
+                const labelY = twoLine ? p.y + 17 : p.y + p.h / 2 + 4;
+                const numY = twoLine ? p.y + 36 : labelY;
+                const num = p.node.n.toLocaleString("en-IN");
+                return (
+                  <>
+                    <text x={x + 14} y={labelY} fontSize={11.5} fontWeight={600} fill="#5a6572">
+                      {p.node.label}{expandable ? (isOpen ? "  ▾" : "  ▸") : ""}
+                    </text>
+                    {p.node.drill && qs ? (
+                      <a href={`/drill?${qs}&${p.node.drill}`} onClick={(e) => e.stopPropagation()}>
+                        <title>open the {num} students</title>
+                        <text x={twoLine ? x + 14 : x + NODE_W - 12} y={numY}
+                          textAnchor={twoLine ? "start" : "end"}
+                          fontSize={twoLine ? 15 : 12.5} fontWeight={800}
+                          fill="#101828" className="sk-num-link" textDecoration="underline">
+                          {num}
+                        </text>
+                      </a>
+                    ) : (
+                      <text x={twoLine ? x + 14 : x + NODE_W - 12} y={numY}
+                        textAnchor={twoLine ? "start" : "end"}
+                        fontSize={twoLine ? 15 : 12.5} fontWeight={800} fill="#101828">
+                        {num}
+                      </text>
+                    )}
+                  </>
+                );
+              })()}
             </g>
           );
         })}

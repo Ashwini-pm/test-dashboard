@@ -956,18 +956,29 @@ export function sankeyTree(ctx: Ctx, round?: string | null): SNode {
   const reg = mu
     ? ids(`SELECT lead_id FROM ${mu.table} WHERE registered='paid'${mu.where}`)
     : inRound("registrations");
-  const appeared = inRound("test_results", "x.appeared=1");
-  const pass = inRound("test_results", "x.result='pass'");
-  const fail = inRound("test_results", "x.result='fail'");
-  const slot = inRound("counselling_sessions", "x.scheduled_at IS NOT NULL");
-  const held = inRound("counselling_sessions", "x.status='held'");
-  const cohort = inRound("counselling_sessions", "x.status IN ('held','no_show','reschedule')");
-  const olAll = inRound("offer_letters");
+  // NSAT-4 keeps its test outcome, slots, offer and seat on its own tables, not
+  // in the base stage tables (which hold no NSAT-4 rows). Without this the Sankey
+  // showed Test given 0 while the funnel above it showed 387.
+  const isN4 = mu?.table === "nsat4_map";
+  const fromN4 = (where: string) => ids(`SELECT lead_id FROM nsat4_map WHERE ${where}`);
+  const appeared = isN4
+    ? fromN4("nullif(test_result,'') IS NOT NULL")
+    : inRound("test_results", "x.appeared=1");
+  const pass = isN4 ? fromN4("lower(test_result)='pass'") : inRound("test_results", "x.result='pass'");
+  const fail = isN4 ? fromN4("lower(test_result)='fail'") : inRound("test_results", "x.result='fail'");
+  const slot = isN4
+    ? ids("SELECT DISTINCT lead_id FROM nsat4_slots")
+    : inRound("counselling_sessions", "x.scheduled_at IS NOT NULL");
+  // NSAT-4's counselling sheet records the booking, never the attendance, so
+  // "held" is genuinely unknown there and must not gate the offer/seat sets.
+  const held = isN4 ? new Set<string>() : inRound("counselling_sessions", "x.status='held'");
+  const cohort = isN4 ? all : inRound("counselling_sessions", "x.status IN ('held','no_show','reschedule')");
+  const olAll = isN4 ? fromN4("nullif(offer_letter,'') IS NOT NULL") : inRound("offer_letters");
   // OL age buckets (business rule): live = first 3 days, expiring = day 3-4, expired = 5+ days
   const olLive = inRound("offer_letters", "x.issued_at > date('now','-3 day')");
   const olExpiring = inRound("offer_letters", "x.issued_at <= date('now','-3 day') AND x.issued_at > date('now','-5 day')");
   const olExpired = inRound("offer_letters", "x.issued_at <= date('now','-5 day')");
-  const seatAll = inRound("payments", "x.paid_at >= '2026-07-16'");
+  const seatAll = isN4 ? fromN4("seat_booked='Yes'") : inRound("payments", "x.paid_at >= '2026-07-16'");
   // CSAT calling lives as aggregates on the map (total_calls / connected_calls),
   // not as call_logs rows, so the comms split must read the map for CSAT too.
   const attempted = mu
@@ -979,6 +990,7 @@ export function sankeyTree(ctx: Ctx, round?: string | null): SNode {
 
   const inter = (a: Set<string>, b: Set<string>) => new Set([...a].filter((x) => b.has(x)));
   const diff = (a: Set<string>, b: Set<string>) => new Set([...a].filter((x) => !b.has(x)));
+  const union = (a: Set<string>, b: Set<string>) => new Set([...a, ...b]);
 
   // drillBase: when the comms split IS the map's calling data (CSAT), each child
   // maps onto a map filter, so the boxes can link to the matching student list.
@@ -1003,10 +1015,15 @@ export function sankeyTree(ctx: Ctx, round?: string | null): SNode {
   const sApp = inter(sReg, appeared);
   const sPass = inter(sApp, pass);
   const sFail = inter(sApp, fail);
-  const sSlot = inter(sPass, slot);
+  // Some counselling rows are held with no scheduled_at (slot-less form outcomes),
+  // so a held student can be missing from the slot set. Being counselled implies a
+  // slot in reality, so fold held in — otherwise Slot booked reads less than its
+  // own children (242 vs 250 on NSAT-3).
+  const slotAny = union(slot, held);
+  const sSlot = inter(sPass, slotAny);
   const sHeld = inter(sSlot.size ? new Set([...sPass]) : sPass, held); // held may include slot-less form outcomes
-  const sOl = inter(sHeld.size ? inter(sPass, cohort) : cohort, olAll);
-  const sSeat = inter(sOl.size ? sOl : cohort, seatAll);
+  const sOl = isN4 ? inter(all, olAll) : inter(sHeld.size ? inter(sPass, cohort) : cohort, olAll);
+  const sSeat = isN4 ? inter(all, seatAll) : inter(sOl.size ? sOl : cohort, seatAll);
 
   const node = (id: string, label: string, n: number, tone: SNode["tone"], children?: SNode[], drill?: string): SNode =>
     ({ id, label, n, tone, ...(drill ? { drill } : {}), ...(children && children.length ? { children } : {}) });
@@ -1025,17 +1042,32 @@ export function sankeyTree(ctx: Ctx, round?: string | null): SNode {
     node("ol_expired", "Offer expired", bExpired.size, "bad", comms(bExpired, "ol_expired")),
     node("held_no_ol", "No offer yet", sHeld.size - sOl.size, "bad", comms(diff(sHeld, olAll), "held_no_ol")),
   ]);
-  const slotNode = node("slot", "Slot booked", sSlot.size, "good", [
-    heldNode,
-    node("slot_no_held", "Counselling pending", Math.max(0, sSlot.size - sHeld.size), "warn", comms(diff(sSlot, held), "slot_no_held")),
-  ]);
+  // A Sankey box must contain its children exactly. For NSAT-4 that rules out
+  // hanging Counselled / Offer / Seat off the pass chain: attendance is never
+  // recorded, and the offers and seats there did not pass the test or book a
+  // slot. So NSAT-4's flow terminates at Slot booked, split by calling reach;
+  // the funnel above the diagram carries its offer and seat counts.
+  const slotNode = isN4
+    ? node("slot", "Slot booked", sSlot.size, "good", comms(sSlot, "slot"))
+    : node("slot", "Slot booked", sSlot.size, "good", [
+        heldNode,
+        // count the actual set (slot booked, not held), not sSlot - sHeld: sHeld is
+        // derived from sPass and can include leads with no slot, which made the box
+        // read 80 while its own children summed to 88.
+        node("slot_no_held", "Counselling pending", diff(sSlot, held).size, "warn", comms(diff(sSlot, held), "slot_no_held")),
+      ]);
   const passNode = node("pass", "Passed", sPass.size, "good", [
     slotNode,
-    node("pass_no_slot", "No slot booked", sPass.size - sSlot.size, "bad", comms(diff(sPass, slot), "pass_no_slot")),
+    node("pass_no_slot", "No slot booked", diff(sPass, slotAny).size, "bad", comms(diff(sPass, slotAny), "pass_no_slot")),
   ]);
+  const sPending = diff(diff(sApp, pass), fail);
   const testNode = node("test", "Test given", sApp.size, "good", [
     passNode,
     node("fail", "Failed", sFail.size, "warn", comms(sFail, "fail")),
+    // sat the test but no result row yet, so the box still contains its children
+    ...(sPending.size > 0
+      ? [node("result_pending", "Result pending", sPending.size, "warn", comms(sPending, "result_pending"))]
+      : []),
   ]);
   const regNode = node("reg", "Registered", sReg.size, "good", [
     testNode,
