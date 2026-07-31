@@ -185,7 +185,7 @@ export function kpis(round: Round): Kpi[] {
       tone: "up",
     },
     {
-      label: `Test Appeared (${pct(appeared, leads)}%)`,
+      label: `Gave the test (${pct(appeared, leads)}%)`,
       value: appeared,
       sub: `${passed.toLocaleString("en-IN")} passed`,
       tint: "warning",
@@ -743,9 +743,9 @@ function funnelN3(round: Round = "NSAT-3", src?: Src): FunnelResult {
       pct: pctReg,
       drop: null,
       note:
-        `${reg.toLocaleString("en-IN")} registered · ${appeared.toLocaleString("en-IN")} appeared · ` +
-        `${tNoShow.toLocaleString("en-IN")} did not appear · ${tNoStatus.toLocaleString("en-IN")} no status yet` +
-        ` · ${Math.round(pctReg)}% of registrations`,
+        `${reg.toLocaleString("en-IN")} registered · ${appeared.toLocaleString("en-IN")} gave the test · ` +
+        `${tNoShow.toLocaleString("en-IN")} did not give it · ${tNoStatus.toLocaleString("en-IN")} not known yet` +
+        ` · ${Math.round(pctReg)}% of those registered`,
     });
     prev = pctReg;
   } else {
@@ -755,7 +755,10 @@ function funnelN3(round: Round = "NSAT-3", src?: Src): FunnelResult {
   const waveCount = int(
     db.prepare(`SELECT COUNT(DISTINCT calling_wave) n FROM call_logs WHERE nsat_round IN (${inc})`).get() as any
   );
-  if (appeared > 0) {
+  // CSAT-1 has no pass/fail and no AI-wave data — only whether the student gave the
+  // test — so none of this detail applies. Running it anyway put a "Result: Pass 0"
+  // row under a Test given of 280, which read as every student having failed.
+  if (appeared > 0 && !useCsatTest) {
     rows[rows.length - 1].expandable = true; // mark the Test row
     if (called > 0) {
       rows.push({
@@ -1185,7 +1188,7 @@ const STAGE_LIST_DEFS: Record<
     extras: [
       {
         key: "test", label: "Test",
-        sql: "CASE WHEN l.lead_id IN (SELECT lead_id FROM test_results WHERE appeared=1) THEN 'Appeared' ELSE 'Did not appear' END",
+        sql: "CASE WHEN l.lead_id IN (SELECT lead_id FROM test_results WHERE appeared=1) THEN 'Gave test' ELSE 'Did not give test' END",
       },
     ],
   },
@@ -1637,15 +1640,15 @@ const STAGE_BREAKDOWN: { stage: string; label: string; tiles: TileRule[] }[] = [
     stage: "registration", label: "Registration", tiles: [
       { key: "total_reg", label: "Total registrations", tone: "neutral", where: "l.lead_id IN (SELECT lead_id FROM registrations)" },
       // Scoped to registrations so the card adds up: appeared + did-not = total.
-      { key: "test_appeared", label: "Test appeared", tone: "good", where: "l.lead_id IN (SELECT lead_id FROM test_results WHERE appeared=1)" },
-      { key: "did_not_appear", label: "Did not appear", tone: "bad", where: "l.lead_id IN (SELECT lead_id FROM registrations) AND l.lead_id NOT IN (SELECT lead_id FROM test_results WHERE appeared=1)", recoverable: false, alertTitle: "Registered, did not take the test", action: "Nurture for the next NSAT round" },
+      { key: "test_appeared", label: "Gave the test", tone: "good", where: "l.lead_id IN (SELECT lead_id FROM test_results WHERE appeared=1)" },
+      { key: "did_not_appear", label: "Did not give the test", tone: "bad", where: "l.lead_id IN (SELECT lead_id FROM registrations) AND l.lead_id NOT IN (SELECT lead_id FROM test_results WHERE appeared=1)", recoverable: false, alertTitle: "Registered, did not take the test", action: "Nurture for the next NSAT round" },
       // Pre-booked students in the cohort (old seat books, OL before 16 Jul).
       { key: "already_seatbook", label: "Already seat booked", tone: "neutral", where: "l.lead_id IN (SELECT lead_id FROM payments) AND NOT (l.lead_id IN (SELECT lead_id FROM counselling_sessions WHERE status IN ('held','no_show','reschedule')) AND l.lead_id IN (SELECT lead_id FROM payments WHERE paid_at >= '2026-07-16'))" },
     ],
   },
   {
     stage: "test", label: "Test", tiles: [
-      { key: "applied", label: "Test appeared", tone: "neutral", where: "l.lead_id IN (SELECT lead_id FROM test_results WHERE appeared=1)" },
+      { key: "applied", label: "Gave the test", tone: "neutral", where: "l.lead_id IN (SELECT lead_id FROM test_results WHERE appeared=1)" },
       { key: "pass", label: "Pass", tone: "good", where: "l.lead_id IN (SELECT lead_id FROM test_results WHERE result='pass')" },
       { key: "fail", label: "Fail", tone: "bad", where: "l.lead_id IN (SELECT lead_id FROM test_results WHERE result='fail')", recoverable: false, alertTitle: "Appeared, failed the test", action: "Retake nurture for the next round", stageLink: "result" },
       // Pre-booked students who actually re-took NSAT-3 (appeared on the 14th).
