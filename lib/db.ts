@@ -585,7 +585,10 @@ function overlayNsat4Csat(pulls: CsatPull): void {
             const cell = String(raw ?? "").trim();
             const vals = cell ? cell.split(",").map((v) => v.trim()).filter(Boolean) : [];
             const seenK = new Set<string>();
-            for (const v of vals.length ? vals : ["No source captured"]) {
+            // A lead with no source in any feed goes under Others rather than its own
+            // row: 42 of them, and the CRM already has an Others category for exactly
+            // this. UTM keeps its own placeholder, which the UTM table filters out.
+            for (const v of vals.length ? vals : [kind === "src" ? "Others" : "No source captured"]) {
               const k = v.toLowerCase();
               if (seenK.has(k)) continue;
               seenK.add(k);

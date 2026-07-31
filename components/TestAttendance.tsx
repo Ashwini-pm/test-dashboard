@@ -145,7 +145,7 @@ export default function TestAttendanceBlock({ data, qs }: { data: Attendance; qs
               student, so <b>these rows do add up to the cohort</b>. Compare sources on Gave test %, not on the
               count: Influencers tops any count because it is {pct(bySource[0]?.registered ?? 0, all.registered)} of
               the volume. A dash means that source brought leads but no registrations, so there was never a test to
-              give.
+              give. Leads with no source in any feed sit under <b>Others</b>.
             </p>
           </>
         )}
