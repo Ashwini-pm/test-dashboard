@@ -81,7 +81,7 @@ function Head({ first, showLeads }: { first: string; showLeads?: boolean }) {
 }
 
 export default function TestAttendanceBlock({ data, qs }: { data: Attendance; qs: string }) {
-  const { all, byProgramme, bySource, byUtm, minUtmReg, calling, lastSync } = data;
+  const { all, byProgramme, bySource, byUtm, minUtmReg, derivedSource, calling, lastSync } = data;
   const stamp = istStamp(lastSync);
   // The programme gap is the story, so surface the best and worst rather than
   // leaving the reader to scan for them.
@@ -146,6 +146,13 @@ export default function TestAttendanceBlock({ data, qs }: { data: Attendance; qs
               Compare sources on Gave test %, not on the count: Influencers tops any count because it is
               {" "}{pct(bySource[0]?.registered ?? 0, all.registered)} of the volume. A dash means that source
               brought leads but no registrations, so there was never a test to give.
+              {derivedSource > 0 && (
+                <>
+                  {" "}For <b>{nf(derivedSource)}</b> leads the signup form captured no source at all, so it was
+                  taken from the CRM&apos;s own category, or from the utm_source on their raw signup row. What is
+                  left under <b>No source captured</b> has no source anywhere.
+                </>
+              )}
             </p>
           </>
         )}

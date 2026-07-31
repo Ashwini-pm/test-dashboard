@@ -191,6 +191,8 @@ export interface AttendRow {
   leads?: number;
   /** "src:organic" / "utm:vedantu_yt_bca", for the &tag= drill */
   tag?: string;
+  /** leads in this row whose source was inferred, not captured by the form */
+  derived?: number;
 }
 
 export interface Attendance {
@@ -201,6 +203,8 @@ export interface Attendance {
   /** utm_campaign, comma-split, only names above minUtmReg — also double counts */
   byUtm: AttendRow[];
   minUtmReg: number;
+  /** leads whose source came from the CRM or the raw signup utm, not the form */
+  derivedSource: number;
   /** called-vs-appeared, registered students only */
   calling: CalledAppeared | null;
   /** max(test_given_at) — this feed moves in batches, not continuously */
@@ -251,7 +255,8 @@ function attendanceByTag(kind: "src" | "utm", where: string): AttendRow[] {
               COUNT(DISTINCT CASE WHEN m.registered='paid' THEN t.lead_id END) reg,
               COUNT(DISTINCT CASE WHEN m.registered='paid' AND m.test_given='Test_Given' THEN t.lead_id END) g,
               COUNT(DISTINCT CASE WHEN m.registered='paid' AND m.test_given='Test_Not_Appear' THEN t.lead_id END) ns,
-              COUNT(DISTINCT CASE WHEN m.registered='paid' AND nullif(m.test_given,'') IS NULL THEN t.lead_id END) unk
+              COUNT(DISTINCT CASE WHEN m.registered='paid' AND nullif(m.test_given,'') IS NULL THEN t.lead_id END) unk,
+              COUNT(DISTINCT CASE WHEN t.derived=1 THEN t.lead_id END) derived
          FROM csat_tag t JOIN csat_map m ON m.lead_id = t.lead_id
         WHERE t.kind = ?${where}
         GROUP BY t.key`
@@ -269,6 +274,7 @@ function attendanceByTag(kind: "src" | "utm", where: string): AttendRow[] {
     given: Number(r.g ?? 0),
     noShow: Number(r.ns ?? 0),
     noStatus: Number(r.unk ?? 0),
+    derived: Number(r.derived ?? 0),
     tag: `${kind}:${String(r.key)}`,
   }));
 }
@@ -330,6 +336,7 @@ export function csatAttendance(where = "", minUtmReg = 20): Attendance | null {
 
   return {
     all, byProgramme, bySource, byUtm, minUtmReg,
+    derivedSource: bySource.reduce((n, r) => n + (r.derived ?? 0), 0),
     calling: csatCalledVsAppeared(where),
     lastSync: ls?.d ?? null,
   };

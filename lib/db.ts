@@ -504,8 +504,12 @@ function overlayNsat4Csat(pulls: CsatPull): void {
   // Keys are lower-cased ('organic' and 'Organic' are the same source); label keeps
   // a readable raw form. These tables DOUBLE COUNT by design.
   db.exec("DROP TABLE IF EXISTS csat_tag");
-  db.exec("CREATE TABLE csat_tag (lead_id TEXT, kind TEXT, key TEXT, label TEXT)");
-  const insTag = db.prepare("INSERT INTO csat_tag(lead_id,kind,key,label) VALUES (?,?,?,?)");
+  db.exec("CREATE TABLE csat_tag (lead_id TEXT, kind TEXT, key TEXT, label TEXT, derived INTEGER)");
+  const insTag = db.prepare("INSERT INTO csat_tag(lead_id,kind,key,label,derived) VALUES (?,?,?,?,?)");
+  // Fallback attribution for leads whose signup form captured no campaign_source.
+  // Built from the raw signup tables (bba/bca/combined), which are pulled ahead of
+  // lead_map, so their utm_source is available by the time we key the tags.
+  const utmByKey = new Map<string, string>();
   db.exec("DROP TABLE IF EXISTS csat_map");
   db.exec("CREATE TABLE csat_map (lead_id TEXT, round_tag TEXT, registered TEXT, campaign_source TEXT, origin TEXT, crm_source_category TEXT, total_calls INTEGER, connected_calls INTEGER, first_signup TEXT, first_call_at TEXT, last_call_at TEXT, counsellor TEXT, name TEXT, phone TEXT, utm_campaign TEXT, crm_program TEXT, signup_programs TEXT, test_given TEXT, test_given_at TEXT)");
   const insCsat = db.prepare("INSERT INTO csat_map(lead_id,round_tag,registered,campaign_source,origin,crm_source_category,total_calls,connected_calls,first_signup,first_call_at,last_call_at,counsellor,name,phone,utm_campaign,crm_program,signup_programs,test_given,test_given_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)");
@@ -576,13 +580,28 @@ function overlayNsat4Csat(pulls: CsatPull): void {
           const lid = String(r.lead_id ?? "");
           for (const [kind, raw] of [["src", r.campaign_source], ["utm", r.utm_campaign]] as const) {
             const cell = String(raw ?? "").trim();
-            const vals = cell ? cell.split(",").map((v) => v.trim()).filter(Boolean) : [];
+            let vals = cell ? cell.split(",").map((v) => v.trim()).filter(Boolean) : [];
+            let derived = 0;
+            // The form captured no source for ~77 CSAT-1 leads, but for 39 of them the
+            // answer exists elsewhere: the CRM's own category, or the utm_source on the
+            // raw signup row. Fall back to those rather than dumping them in an unknown
+            // bucket. Only 'src' falls back; a UTM campaign name has no equivalent.
+            if (!vals.length && kind === "src") {
+              const crm = String(r.crm_source_category ?? "").trim();
+              if (crm) { vals = crm.split(",").map((v) => v.trim()).filter(Boolean); derived = 1; }
+              else {
+                const em = String(r.email ?? "").trim().toLowerCase();
+                const ph10 = p10(String(r.phone ?? ""));
+                const hit = (em && utmByKey.get(`e:${em}`)) || (ph10 && utmByKey.get(`p:${ph10}`)) || "";
+                if (hit) { vals = hit.split(",").map((v) => v.trim()).filter(Boolean); derived = 1; }
+              }
+            }
             const seenK = new Set<string>();
-            for (const v of vals.length ? vals : ["(not set)"]) {
+            for (const v of vals.length ? vals : ["No source captured"]) {
               const k = v.toLowerCase();
               if (seenK.has(k)) continue;
               seenK.add(k);
-              insTag.run(lid, kind, k, v);
+              insTag.run(lid, kind, k, v, derived);
             }
           }
         }
@@ -592,6 +611,16 @@ function overlayNsat4Csat(pulls: CsatPull): void {
         table === "nsat4" ? "NSAT-4" :
         table === "bba" ? "CSAT-BBA" :
         table === "bca" ? "CSAT-BCA" : "CSAT-COMB";
+      if (table === "bba" || table === "bca" || table === "combined") {
+        for (const r of rows) {
+          const us = String(r.utm_source ?? "").trim();
+          if (!us) continue;
+          const em = String(r.email ?? "").trim().toLowerCase();
+          const ph10 = p10(String(r.phone ?? ""));
+          if (em && !utmByKey.has(`e:${em}`)) utmByKey.set(`e:${em}`, us);
+          if (ph10 && !utmByKey.has(`p:${ph10}`)) utmByKey.set(`p:${ph10}`, us);
+        }
+      }
       for (const r of rows) {
         // CSAT: key the lead by person (sunstone_user_id → phone10 → id) so the
         // duplicate 422-rows (same student, form re-submitted) collapse to one
