@@ -2,8 +2,9 @@ import Link from "next/link";
 import { ensureFresh } from "@/lib/db";
 import { parseCtx, students, leaks, intentSummary, roundOptions, defaultRound } from "@/lib/v2";
 import RoundSelect from "@/components/RoundSelect";
-import { csatAttendance } from "@/lib/channels";
+import { csatAttendance, csatCalling } from "@/lib/channels";
 import TestAttendanceBlock from "@/components/TestAttendance";
+import CallingBlock from "@/components/CallingBlock";
 
 export const dynamic = "force-dynamic";
 // cold-start hydrate pulls ~20 tables; the default 10s limit was too tight
@@ -27,6 +28,8 @@ export default async function Students({ searchParams }: { searchParams: Promise
   // picked) is the breakdown that matters here, and scoping to a signup page as
   // well would give two different splits of the same cohort.
   const attend = ctx === "CSAT" ? csatAttendance() : null;
+  // Calling sits under the test-given block, cohort-wide like it.
+  const calling = ctx === "CSAT" ? csatCalling() : null;
   const dq = `${ctx === "CSAT" ? "ctx=CSAT&" : ""}round=All`;
 
   const chips: { key: string | null; label: string; n: number }[] = [
@@ -49,6 +52,7 @@ export default async function Students({ searchParams }: { searchParams: Promise
       </div>
 
       {attend && <TestAttendanceBlock data={attend} qs={dq} />}
+      {calling && <CallingBlock data={calling} qs={dq} />}
       <div className="chips">
         {chips.map((c) => (
           <Link key={c.label} href={`/students?${c.key ? `filter=${c.key}` : ""}${qs}`.replace("?&", "?")}

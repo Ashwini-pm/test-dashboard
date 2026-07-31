@@ -454,7 +454,7 @@ async function fetchCsatProject(): Promise<CsatPull | null> {
       table: "ai_calls",
       rows: await pull(
         "ai_calls",
-        "nsat4_lead_id,csat1_lead_id,status",
+        "nsat4_lead_id,csat1_lead_id,status,called_at",
         "&or=(nsat4_lead_id.not.is.null,csat1_lead_id.not.is.null)"
       ),
     }))(),
@@ -492,8 +492,8 @@ function overlayNsat4Csat(pulls: CsatPull): void {
   // AI reach per lead, per cohort. reached = at least one 'completed' call (a real
   // conversation); called = any call at all, whatever the status.
   db.exec("DROP TABLE IF EXISTS ai_reach");
-  db.exec("CREATE TABLE ai_reach (lead_id TEXT, cohort TEXT, reached INTEGER, called INTEGER)");
-  const insAi = db.prepare("INSERT INTO ai_reach(lead_id,cohort,reached,called) VALUES (?,?,?,?)");
+  db.exec("CREATE TABLE ai_reach (lead_id TEXT, cohort TEXT, reached INTEGER, called INTEGER, last_call TEXT)");
+  const insAi = db.prepare("INSERT INTO ai_reach(lead_id,cohort,reached,called,last_call) VALUES (?,?,?,?,?)");
   db.exec("DROP TABLE IF EXISTS nsat4_slots");
   db.exec("CREATE TABLE nsat4_slots (lead_id TEXT, booking_id TEXT, call_date TEXT, call_time TEXT, panelist TEXT, meet_link TEXT, conf_sent INTEGER, booked_at TEXT)");
   const insSlot = db.prepare("INSERT INTO nsat4_slots(lead_id,booking_id,call_date,call_time,panelist,meet_link,conf_sent,booked_at) VALUES (?,?,?,?,?,?,?,?)");
@@ -523,21 +523,22 @@ function overlayNsat4Csat(pulls: CsatPull): void {
       }
       if (table === "ai_calls") {
         // collapse call rows to one flag pair per lead before inserting
-        const acc = new Map<string, { reached: boolean }>();
+        const acc = new Map<string, { reached: boolean; last: string }>();
         for (const r of rows) {
           const done = String(r.status ?? "") === "completed";
+          const at = r.called_at == null ? "" : String(r.called_at);
           for (const [col, coh] of [["nsat4_lead_id", "NSAT-4"], ["csat1_lead_id", "CSAT-1"]] as const) {
             const lid = r[col] == null ? "" : String(r[col]);
             if (!lid) continue;
             const k = `${coh}\u0000${lid}`;
             const cur = acc.get(k);
-            if (cur) { if (done) cur.reached = true; }
-            else acc.set(k, { reached: done });
+            if (cur) { if (done) cur.reached = true; if (at > cur.last) cur.last = at; }
+            else acc.set(k, { reached: done, last: at });
           }
         }
         for (const [k, v] of acc) {
           const [coh, lid] = k.split("\u0000");
-          insAi.run(lid, coh, v.reached ? 1 : 0, 1);
+          insAi.run(lid, coh, v.reached ? 1 : 0, 1, v.last || null);
         }
         continue;
       }

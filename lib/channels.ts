@@ -426,3 +426,110 @@ export function csatCalledVsAppeared(where = ""): CalledAppeared | null {
     channels,
   };
 }
+
+// ---------------------------------------------------------------------------
+// CSAT-1 calling: did we dial this student, and if we dialled, did anyone speak
+// to them. Human (CRM) and AI (Alchemyst) side by side, NEVER summed — the same
+// student can be dialled by both.
+//
+// Every figure counts LEADS, not calls.
+//
+//   Leads
+//    |- Dialled
+//    |   |- Connected        we spoke to them
+//    |   \- Not connected    we dialled, nobody picked up
+//    |- Never dialled
+//    \- No calling data      human channel only
+//
+// "No calling data" is total_calls IS NULL: the lead's CRM record predates the
+// Redash dump behind lead_map, so the dump has no row for it. That means we do not
+// know, which is NOT the same claim as "we never called". It stays its own bucket
+// and is never folded into Never dialled. (Note the older act=never drill filter
+// does merge the two — deliberately not reused here.)
+//
+// Connected is shown as a share of DIALLED, never of leads: the two channels dial
+// very different numbers of people, so only that ratio compares them fairly.
+// ---------------------------------------------------------------------------
+
+export interface CallSide {
+  dialled: number;
+  connected: number;
+  notConnected: number;
+  neverDialled: number;
+  /** human channel only; AI has no equivalent */
+  noData: number | null;
+}
+
+export interface CallSegment {
+  key: string;
+  label: string;
+  leads: number;
+  human: CallSide;
+  ai: CallSide;
+}
+
+export interface CsatCalling {
+  all: CallSegment;
+  segments: CallSegment[];
+  /** max(ai_calls.called_at) — AI data loads on demand, not on a schedule */
+  aiLastCall: string | null;
+}
+
+const AI_DIALLED = "m.lead_id IN (SELECT lead_id FROM ai_reach WHERE cohort='CSAT-1')";
+const AI_CONN = "m.lead_id IN (SELECT lead_id FROM ai_reach WHERE cohort='CSAT-1' AND reached=1)";
+
+function callSegment(key: string, label: string, where: string): CallSegment {
+  const r = db
+    .prepare(
+      `SELECT COUNT(*) leads,
+              SUM(CASE WHEN coalesce(m.total_calls,0) > 0 THEN 1 ELSE 0 END) h_d,
+              SUM(CASE WHEN coalesce(m.connected_calls,0) > 0 THEN 1 ELSE 0 END) h_c,
+              SUM(CASE WHEN coalesce(m.total_calls,0) > 0 AND coalesce(m.connected_calls,0) = 0 THEN 1 ELSE 0 END) h_n,
+              SUM(CASE WHEN m.total_calls IS NULL THEN 1 ELSE 0 END) h_u,
+              SUM(CASE WHEN m.total_calls IS NOT NULL AND m.total_calls = 0 THEN 1 ELSE 0 END) h_never,
+              SUM(CASE WHEN ${AI_DIALLED} THEN 1 ELSE 0 END) a_d,
+              SUM(CASE WHEN ${AI_CONN} THEN 1 ELSE 0 END) a_c
+         FROM csat_map m WHERE 1=1${where}`
+    )
+    .get() as Record<string, number>;
+  const n = (k: string) => Number(r?.[k] ?? 0);
+  const leads = n("leads");
+  const aD = n("a_d");
+  return {
+    key,
+    label,
+    leads,
+    human: {
+      dialled: n("h_d"),
+      connected: n("h_c"),
+      notConnected: n("h_n"),
+      neverDialled: n("h_never"),
+      noData: n("h_u"),
+    },
+    ai: {
+      dialled: aD,
+      connected: n("a_c"),
+      notConnected: aD - n("a_c"),
+      neverDialled: leads - aD,
+      noData: null,
+    },
+  };
+}
+
+export function csatCalling(where = ""): CsatCalling | null {
+  if (!tableReady("csat_map") || !tableReady("ai_reach")) return null;
+  const all = callSegment("all", "All", where);
+  if (all.leads === 0) return null;
+  const last = db
+    .prepare("SELECT max(last_call) d FROM ai_reach WHERE cohort='CSAT-1' AND last_call IS NOT NULL")
+    .get() as { d: string | null } | undefined;
+  return {
+    all,
+    segments: [
+      callSegment("reg", "Registered", `${where} AND m.registered='paid'`),
+      callSegment("unreg", "Not registered", `${where} AND coalesce(m.registered,'') <> 'paid'`),
+      all,
+    ],
+    aiLastCall: last?.d ?? null,
+  };
+}

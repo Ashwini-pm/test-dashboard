@@ -1571,3 +1571,15 @@ table.list tbody tr:hover td {
 .ca-pct { font-weight: 700; }
 .ca-link { cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
 .ca-svg a:hover .ca-link { fill: var(--primary-2); }
+
+/* ---- CSAT-1 calling block (Students) ------------------------------------- */
+.cb-table td, .cb-table th { white-space: nowrap; }
+.cb-inner { padding-left: 22px; position: relative; color: var(--muted); }
+.cb-inner::before {
+  content: ""; position: absolute; left: 8px; top: 50%; width: 8px; height: 1px;
+  background: var(--divider);
+}
+.cb-h { color: var(--green); }
+.cb-a { color: var(--blue); }
+.cb-table thead th.cb-h, .cb-table thead th.cb-a { font-weight: 700; }
+.cb-pct { font-weight: 700; }

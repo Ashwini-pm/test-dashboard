@@ -507,6 +507,8 @@ export interface DrillParams {
   tag?: string | null;     // "src:organic" | "utm:vedantu_yt_bca" (comma-split tag)
   reach?: string | null;   // CSAT-1 call reach: "any" (AI or person connected) | "none"
   ch?: string | null;      // CSAT-1 channel that connected: both | hu | ai | no
+  hc?: string | null;      // human calling: dialled | conn | noconn | never | nodata
+  ac?: string | null;      // AI calling:    dialled | conn | noconn | never
 }
 
 // Distinct values for the filter dropdowns on the drill page.
@@ -635,6 +637,24 @@ export function drill(ctx: Ctx, round: string | null | undefined, p: DrillParams
       w.push(`m.lead_id IN (SELECT lead_id FROM csat_tag WHERE kind='${esc(kind)}' AND key='${esc(key.toLowerCase())}')`);
       bits.push(`${kind === "src" ? "source" : "utm"} ${key}`);
     }
+  }
+  // Calling block filters. Unlike act=never, these keep "never dialled"
+  // (total_calls = 0) apart from "no calling data" (total_calls IS NULL): the
+  // second means we do not know, not that nobody called.
+  if (p.hc && m.table === "csat_map") {
+    if (p.hc === "dialled") { w.push("coalesce(m.total_calls,0) > 0"); bits.push("dialled by a person"); }
+    if (p.hc === "conn")    { w.push("coalesce(m.connected_calls,0) > 0"); bits.push("a person connected"); }
+    if (p.hc === "noconn")  { w.push("coalesce(m.total_calls,0) > 0 AND coalesce(m.connected_calls,0) = 0"); bits.push("dialled by a person, no answer"); }
+    if (p.hc === "never")   { w.push("m.total_calls IS NOT NULL AND m.total_calls = 0"); bits.push("never dialled by a person"); }
+    if (p.hc === "nodata")  { w.push("m.total_calls IS NULL"); bits.push("no calling data"); }
+  }
+  if (p.ac && m.table === "csat_map") {
+    const D = "m.lead_id IN (SELECT lead_id FROM ai_reach WHERE cohort='CSAT-1')";
+    const C = "m.lead_id IN (SELECT lead_id FROM ai_reach WHERE cohort='CSAT-1' AND reached=1)";
+    if (p.ac === "dialled") { w.push(D); bits.push("dialled by AI"); }
+    if (p.ac === "conn")    { w.push(C); bits.push("AI connected"); }
+    if (p.ac === "noconn")  { w.push(`${D} AND NOT (${C})`); bits.push("dialled by AI, no answer"); }
+    if (p.ac === "never")   { w.push(`NOT (${D})`); bits.push("never dialled by AI"); }
   }
   if (p.pstage && m.table === "nsat4_map") {
     if (p.pstage === "test") { w.push("nullif(m.test_result,'') IS NOT NULL"); bits.push("test given"); }
