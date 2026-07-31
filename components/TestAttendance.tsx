@@ -36,11 +36,26 @@ function Row({ r, qs, strong, showLeads }: { r: AttendRow; qs: string; strong?: 
   );
   // no registrations means a test status was never possible — a dash, not 0%
   const noReg = r.registered === 0;
+  const leadHref = r.prog
+    ? `/drill?${qs}&sprog=${encodeURIComponent(r.prog)}`
+    : r.tag
+      ? `/drill?${qs}&tag=${encodeURIComponent(r.tag)}`
+      : `/drill?${qs}`;
   return (
     <tr className={strong ? "co-strong" : undefined}>
       <td>{r.label}</td>
-      {showLeads && <td className="tnum">{nf(r.leads ?? 0)}</td>}
-      <td className="tnum">{nf(r.registered)}</td>
+      {showLeads && (
+        <td className="tnum">
+          {(r.leads ?? 0) > 0
+            ? <Link href={leadHref} className="sb-link">{nf(r.leads ?? 0)}</Link>
+            : nf(r.leads ?? 0)}
+        </td>
+      )}
+      <td className="tnum">
+        {r.registered > 0
+          ? <Link href={`/drill?${qs}&reg=paid${own}`} className="sb-link">{nf(r.registered)}</Link>
+          : nf(r.registered)}
+      </td>
       {noReg ? <td className="tnum fc-zero">–</td> : link(r.given, "given", "cv-reg")}
       <td className="tnum">{noReg ? "–" : pct(r.given, r.registered)}</td>
       {noReg ? <td className="tnum fc-zero">–</td> : link(r.noShow, "noshow", "fc-bad")}
@@ -104,10 +119,10 @@ export default function TestAttendanceBlock({ data, qs }: { data: Attendance; qs
         <h4 className="ta-h">By programme</h4>
         <div className="cv-scroll">
           <table className="cv-table ta-table">
-            <Head first="Programme" />
+            <Head first="Programme" showLeads />
             <tbody>
-              {byProgramme.map((p) => <Row key={p.key} r={p} qs={qs} />)}
-              <Row r={all} qs={qs} strong />
+              {byProgramme.map((p) => <Row key={p.key} r={p} qs={qs} showLeads />)}
+              <Row r={all} qs={qs} strong showLeads />
             </tbody>
           </table>
         </div>

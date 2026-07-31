@@ -208,18 +208,22 @@ export interface Attendance {
 }
 
 function attendRow(key: string, label: string, where: string): AttendRow {
+  // leads counts every lead in the slice; the rest only the registered ones, since
+  // a lead who never registered was never due to give the test
   const r = db
     .prepare(
-      `SELECT COUNT(*) reg,
-              SUM(CASE WHEN test_given='Test_Given' THEN 1 ELSE 0 END) g,
-              SUM(CASE WHEN test_given='Test_Not_Appear' THEN 1 ELSE 0 END) ns,
-              SUM(CASE WHEN nullif(test_given,'') IS NULL THEN 1 ELSE 0 END) unk
-         FROM csat_map WHERE registered='paid'${where}`
+      `SELECT COUNT(*) leads,
+              SUM(CASE WHEN registered='paid' THEN 1 ELSE 0 END) reg,
+              SUM(CASE WHEN registered='paid' AND test_given='Test_Given' THEN 1 ELSE 0 END) g,
+              SUM(CASE WHEN registered='paid' AND test_given='Test_Not_Appear' THEN 1 ELSE 0 END) ns,
+              SUM(CASE WHEN registered='paid' AND nullif(test_given,'') IS NULL THEN 1 ELSE 0 END) unk
+         FROM csat_map WHERE 1=1${where}`
     )
     .get() as Record<string, number>;
   return {
     key,
     label,
+    leads: Number(r?.leads ?? 0),
     registered: Number(r?.reg ?? 0),
     given: Number(r?.g ?? 0),
     noShow: Number(r?.ns ?? 0),
@@ -285,13 +289,18 @@ export function csatAttendance(where = "", minUtmReg = 20): Attendance | null {
   const all = attendRow("all", "All CSAT-1", where);
   if (all.registered === 0) return null;
 
-  // signup_programs holds 'BBA', 'BCA' or 'BBA,BCA' — the student's own choice
+  // signup_programs holds 'BBA', 'BCA' or 'BBA,BCA' — the student's own choice.
+  // Grouped over ALL leads, not just the paid ones, so a CRM-attributed lead that
+  // never filled the form still appears (as "no signup") and the Leads column adds
+  // up to the cohort instead of quietly dropping them.
   const progs = db
     .prepare(
-      `SELECT coalesce(nullif(signup_programs,''),'(no signup)') p, COUNT(*) n
-         FROM csat_map WHERE registered='paid'${where} GROUP BY 1 ORDER BY n DESC`
+      `SELECT coalesce(nullif(signup_programs,''),'(no signup)') p,
+              COUNT(*) n,
+              SUM(CASE WHEN registered='paid' THEN 1 ELSE 0 END) paid
+         FROM csat_map WHERE 1=1${where} GROUP BY 1 ORDER BY paid DESC, n DESC`
     )
-    .all() as { p: string; n: number }[];
+    .all() as { p: string; n: number; paid: number }[];
 
   const label = (p: string) => (p === "BBA,BCA" ? "BBA + BCA" : p);
   const byProgramme = progs.map((r) => ({
