@@ -81,7 +81,7 @@ function Head({ first, showLeads }: { first: string; showLeads?: boolean }) {
 }
 
 export default function TestAttendanceBlock({ data, qs }: { data: Attendance; qs: string }) {
-  const { all, byProgramme, bySource, byUtm, minUtmReg, derivedSource, calling, lastSync } = data;
+  const { all, byProgramme, bySource, byUtm, minUtmReg, calling, lastSync } = data;
   const stamp = istStamp(lastSync);
   // The programme gap is the story, so surface the best and worst rather than
   // leaving the reader to scan for them.
@@ -140,19 +140,12 @@ export default function TestAttendanceBlock({ data, qs }: { data: Attendance; qs
               </table>
             </div>
             <p className="ta-foot">
-              A lead can arrive through more than one route, and those cells hold several
-              comma-separated values, so every source on the row is credited.{" "}
-              <b>The same student can be counted twice here, so this table will not add up to {nf(all.registered)}.</b>{" "}
-              Compare sources on Gave test %, not on the count: Influencers tops any count because it is
-              {" "}{pct(bySource[0]?.registered ?? 0, all.registered)} of the volume. A dash means that source
-              brought leads but no registrations, so there was never a test to give.
-              {derivedSource > 0 && (
-                <>
-                  {" "}For <b>{nf(derivedSource)}</b> leads the signup form captured no source at all, so it was
-                  taken from the CRM&apos;s own category, or from the utm_source on their raw signup row. What is
-                  left under <b>No source captured</b> has no source anywhere.
-                </>
-              )}
+              Source is the CRM&apos;s own category, not the utm the signup form captured. The two disagree often and
+              the form tends to call everything Influencers or Organic, so this reads the CRM. One source per
+              student, so <b>these rows do add up to the cohort</b>. Compare sources on Gave test %, not on the
+              count: Influencers tops any count because it is {pct(bySource[0]?.registered ?? 0, all.registered)} of
+              the volume. A dash means that source brought leads but no registrations, so there was never a test to
+              give.
             </p>
           </>
         )}

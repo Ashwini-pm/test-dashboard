@@ -504,8 +504,8 @@ function overlayNsat4Csat(pulls: CsatPull): void {
   // Keys are lower-cased ('organic' and 'Organic' are the same source); label keeps
   // a readable raw form. These tables DOUBLE COUNT by design.
   db.exec("DROP TABLE IF EXISTS csat_tag");
-  db.exec("CREATE TABLE csat_tag (lead_id TEXT, kind TEXT, key TEXT, label TEXT, derived INTEGER)");
-  const insTag = db.prepare("INSERT INTO csat_tag(lead_id,kind,key,label,derived) VALUES (?,?,?,?,?)");
+  db.exec("CREATE TABLE csat_tag (lead_id TEXT, kind TEXT, key TEXT, label TEXT)");
+  const insTag = db.prepare("INSERT INTO csat_tag(lead_id,kind,key,label) VALUES (?,?,?,?)");
 
   db.exec("DROP TABLE IF EXISTS csat_map");
   db.exec("CREATE TABLE csat_map (lead_id TEXT, round_tag TEXT, registered TEXT, campaign_source TEXT, origin TEXT, crm_source_category TEXT, total_calls INTEGER, connected_calls INTEGER, first_signup TEXT, first_call_at TEXT, last_call_at TEXT, counsellor TEXT, name TEXT, phone TEXT, utm_campaign TEXT, crm_program TEXT, signup_programs TEXT, test_given TEXT, test_given_at TEXT)");
@@ -575,30 +575,21 @@ function overlayNsat4Csat(pulls: CsatPull): void {
           // one tag row per (lead, value); dedupe so a cell listing the same value
           // twice in different case does not count the lead twice
           const lid = String(r.lead_id ?? "");
-          for (const [kind, raw] of [["src", r.campaign_source], ["utm", r.utm_campaign]] as const) {
+          // Source = crm_source_category, the CRM's own conclusion, NOT campaign_source
+          // (the utm the form captured). Checked against the C-SAT master sheet's LSC:
+          // crm_source_category agreed 17/17, campaign_source disagreed 49/60, calling
+          // Collegedunia / Consultants / Youtube Channels / Marketing Events / Referral
+          // all "Influencers" or "organic". UTM campaign name still comes from the form,
+          // which is correct — that IS a form field.
+          for (const [kind, raw] of [["src", r.crm_source_category], ["utm", r.utm_campaign]] as const) {
             const cell = String(raw ?? "").trim();
-            let vals = cell ? cell.split(",").map((v) => v.trim()).filter(Boolean) : [];
-            let derived = 0;
-            // The form captured no source for ~77 CSAT-1 leads; for 32 of them the CRM
-            // has its own category, so use that rather than an unknown bucket.
-            //
-            // Matching the raw signup row's utm_source by email/phone was tried and
-            // REMOVED: checked against a full CRM pull for the 6 leads it resolved, all
-            // 3 that were verifiable came back wrong (it said Influencers where the CRM
-            // said Paid Performance Google, Collegedunia and Youtube Channels). An
-            // unknown source beats a confident wrong one.
-            //
-            // Only 'src' falls back; a UTM campaign name has no equivalent.
-            if (!vals.length && kind === "src") {
-              const crm = String(r.crm_source_category ?? "").trim();
-              if (crm) { vals = crm.split(",").map((v) => v.trim()).filter(Boolean); derived = 1; }
-            }
+            const vals = cell ? cell.split(",").map((v) => v.trim()).filter(Boolean) : [];
             const seenK = new Set<string>();
             for (const v of vals.length ? vals : ["No source captured"]) {
               const k = v.toLowerCase();
               if (seenK.has(k)) continue;
               seenK.add(k);
-              insTag.run(lid, kind, k, v, derived);
+              insTag.run(lid, kind, k, v);
             }
           }
         }
