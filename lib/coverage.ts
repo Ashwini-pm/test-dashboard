@@ -132,6 +132,33 @@ export async function auditTables(): Promise<TableStatus[]> {
     });
 }
 
+/**
+ * Rows in a feed whose lead_id is not in the lead map, so every map-scoped view
+ * silently drops them. This is why Slot booked read 138 against 139 in the sheet.
+ */
+export function auditOrphans(): { feed: string; orphans: number; note: string }[] {
+  const checks: [string, string, string][] = [
+    ["csat_slots", "csat_map", "CSAT-1 counselling slots"],
+    ["csat_outcome", "csat_map", "CSAT-1 panelist outcomes"],
+    ["nsat4_slots", "nsat4_map", "NSAT-4 counselling slots"],
+  ];
+  const out: { feed: string; orphans: number; note: string }[] = [];
+  for (const [feed, map, label] of checks) {
+    try {
+      const r = db.prepare(
+        `SELECT COUNT(DISTINCT lead_id) n FROM ${feed} WHERE lead_id NOT IN (SELECT lead_id FROM ${map})`
+      ).get() as { n: number };
+      if (r?.n > 0)
+        out.push({
+          feed,
+          orphans: r.n,
+          note: `${r.n} lead${r.n === 1 ? "" : "s"} in ${label} are not in ${map}, so every view scoped to the map drops them`,
+        });
+    } catch { /* table missing: the memory audit already reports that */ }
+  }
+  return out;
+}
+
 /** In-memory tables the hydrate is meant to build, and whether they have rows. */
 export function auditMemory(): { table: string; rows: number; ok: boolean }[] {
   const want = [

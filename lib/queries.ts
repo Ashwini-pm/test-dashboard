@@ -692,8 +692,13 @@ function funnelN3(round: Round = "NSAT-3", src?: Src): FunnelResult {
   // sourced from the NSAT sheet's SB Date, not crm_leads_6778: that Redash dump
   // filters lead_created >= 14 Jul and so misses bookings by students whose CRM
   // lead predates the round.
+  // A CSAT-1 seat only counts in the funnel when a panelist recorded the student:
+  // the counselling funnel should not claim seats it never touched. Seats with no
+  // panelist response are real, but they are direct admissions — counted at lead
+  // level in the Post test block instead.
   const seats = useCsatTest
-    ? c(`SELECT COUNT(*) n FROM csat_map WHERE round_tag IN (${inc}) AND seat_booked='Yes'`)
+    ? c(`SELECT COUNT(*) n FROM csat_map m WHERE m.round_tag IN (${inc}) AND m.seat_booked='Yes'
+          AND m.lead_id IN (SELECT lead_id FROM csat_outcome)`)
     : useN4
     ? c(`SELECT COUNT(*) n FROM nsat4_map WHERE seat_booked='Yes'`)
     : c(`SELECT COUNT(*) n FROM payments x ${jl(" AND x.paid_at >= '2026-07-16' AND x.lead_id IN (SELECT lead_id FROM counselling_sessions WHERE status IN ('held','no_show','reschedule'))")}`);
@@ -858,7 +863,18 @@ function funnelN3(round: Round = "NSAT-3", src?: Src): FunnelResult {
       : "counselling not started yet"
   );
   main("offer_letter", "Offer Letter", offers, "no offer feed yet");
-  main("seat_payment", "Seat Payment", seats, "no seat-payment feed yet");
+  const seatsUnverified = useCsatTest
+    ? c(`SELECT COUNT(*) n FROM csat_map m WHERE m.round_tag IN (${inc}) AND m.seat_booked='Yes'
+          AND m.lead_id NOT IN (SELECT lead_id FROM csat_outcome)`)
+    : 0;
+  main(
+    "seat_payment",
+    "Seat Payment",
+    seats,
+    useCsatTest && seatsUnverified > 0
+      ? `${seatsUnverified} seat${seatsUnverified === 1 ? "" : "s"} booked without a panelist response — shown at lead level, not here`
+      : "no seat-payment feed yet"
+  );
   return { base, rows };
 }
 

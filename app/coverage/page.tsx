@@ -1,5 +1,5 @@
 import { ensureFresh } from "@/lib/db";
-import { auditTables, auditMemory, auditBlocks } from "@/lib/coverage";
+import { auditTables, auditMemory, auditBlocks, auditOrphans } from "@/lib/coverage";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -20,9 +20,10 @@ export default async function DataCoverage() {
   const allBlocks = auditBlocks();
   const blocks = allBlocks.filter((b) => !b.expected);
   const known = allBlocks.filter((b) => b.expected);
+  const orphans = auditOrphans();
   const problems = tables.filter((t) => t.state === "unreadable" || t.state === "not-pulled");
   const memBad = mem.filter((m) => !m.ok);
-  const anything = problems.length + memBad.length + blocks.length;
+  const anything = problems.length + memBad.length + blocks.length + orphans.length;
 
   return (
     <>
@@ -51,6 +52,9 @@ export default async function DataCoverage() {
               ))}
               {blocks.map((b, i) => (
                 <li key={`b${i}`}><b>{b.round}</b> — {b.issue}</li>
+              ))}
+              {orphans.map((o) => (
+                <li key={o.feed}><b>{o.feed}</b> — {o.note}</li>
               ))}
             </ul>
           )}

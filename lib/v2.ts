@@ -186,7 +186,8 @@ export function sourceStages(ctx: Ctx, round?: string | null): SourceStage[] {
       ? ([
           ["slotb", "Slot booked", fromMap(" AND m.lead_id IN (SELECT lead_id FROM csat_slots)")],
           ["ol", "Offer letter", fromMap(" AND nullif(m.offer_letter,'') IS NOT NULL")],
-          ["seat", "Seat booked", fromMap(" AND m.seat_booked = 'Yes'")],
+          // lead level: every seat, counselled or not
+          ["seat", "Seat booked (all)", fromMap(" AND m.seat_booked = 'Yes'")],
         ] as [string, string, string][])
       : []),
     ...(m.table === "nsat4_map"
@@ -438,7 +439,11 @@ export function postTestTable(ctx: Ctx, round?: string | null): FunnelCallRow[] 
       ["slot", "Slot booked", " AND m.lead_id IN (SELECT lead_id FROM csat_slots)"],
       ["couns", "Counselling done", " AND m.lead_id IN (SELECT lead_id FROM csat_outcome WHERE status LIKE 'Happening%')"],
       ["ol", "Offer letter", " AND nullif(m.offer_letter,'') IS NOT NULL"],
-      ["seat", "Seat booked", " AND m.seat_booked = 'Yes'"],
+      // Verified = a panelist recorded this student. The rest are real seats but
+      // direct admissions that never went through counselling, so they are counted
+      // separately at lead level rather than credited to the counselling funnel.
+      ["seat", "Seat booked · counselled", " AND m.seat_booked = 'Yes' AND m.lead_id IN (SELECT lead_id FROM csat_outcome)"],
+      ["seat_nc", "Seat booked · no panelist response", " AND m.seat_booked = 'Yes' AND m.lead_id NOT IN (SELECT lead_id FROM csat_outcome)"],
     ];
     for (const [key, label, scope] of defs) {
       let cols;
@@ -686,7 +691,9 @@ export function drill(ctx: Ctx, round: string | null | undefined, p: DrillParams
     if (p.pstage === "slot")  { w.push("m.lead_id IN (SELECT lead_id FROM csat_slots)"); bits.push("counselling slot booked"); }
     if (p.pstage === "couns") { w.push("m.lead_id IN (SELECT lead_id FROM csat_outcome WHERE status LIKE 'Happening%')"); bits.push("counselling done"); }
     if (p.pstage === "ol")    { w.push("nullif(m.offer_letter,'') IS NOT NULL"); bits.push("offer letter"); }
-    if (p.pstage === "seat")  { w.push("m.seat_booked = 'Yes'"); bits.push("seat booked"); }
+    if (p.pstage === "seat")     { w.push("m.seat_booked = 'Yes' AND m.lead_id IN (SELECT lead_id FROM csat_outcome)"); bits.push("seat booked, counselled"); }
+    if (p.pstage === "seat_nc")  { w.push("m.seat_booked = 'Yes' AND m.lead_id NOT IN (SELECT lead_id FROM csat_outcome)"); bits.push("seat booked, no panelist response"); }
+    if (p.pstage === "seat_all") { w.push("m.seat_booked = 'Yes'"); bits.push("seat booked, any"); }
   }
   if (p.pstage && m.table === "nsat4_map") {
     if (p.pstage === "test") { w.push("nullif(m.test_result,'') IS NOT NULL"); bits.push("test given"); }
@@ -1179,6 +1186,16 @@ export function sankeyTree(ctx: Ctx, round?: string | null): SNode {
     ]),
     node("no_slot", "No slot booked", diff(sApp, slotAny).size, "bad", comms(diff(sApp, slotAny), "csat_no_slot")),
   ]);
+  // Slot bookers who never gave the test: 1 today. Without this branch they vanish
+  // from the diagram and Slot booked reads one less than the funnel.
+  const noTest = diff(sReg, appeared);
+  const noTestSlot = inter(noTest, slotAny);
+  const noTestChildren = noTestSlot.size > 0
+    ? [
+        node("nt_slot", "Slot booked anyway", noTestSlot.size, "warn", comms(noTestSlot, "csat_nt_slot")),
+        node("nt_no_slot", "No slot booked", diff(noTest, slotAny).size, "bad", comms(diff(noTest, slotAny), "csat_nt_no_slot")),
+      ]
+    : comms(noTest, "reg_no_test", "reg=paid");
   const testNode = node("test", "Test given", sApp.size, "good", [
     passNode,
     node("fail", "Failed", sFail.size, "warn", comms(sFail, "fail")),
@@ -1189,7 +1206,10 @@ export function sankeyTree(ctx: Ctx, round?: string | null): SNode {
   ]);
   const regNode = node("reg", "Registered", sReg.size, "good", [
     isCsat ? testNodeCsat : testNode,
-    node("reg_no_test", "Did not give test", sReg.size - sApp.size, "bad", comms(diff(sReg, appeared), "reg_no_test", "reg=paid")),
+    node(
+      "reg_no_test", "Did not give test", sReg.size - sApp.size, "bad",
+      isCsat ? noTestChildren : comms(diff(sReg, appeared), "reg_no_test", "reg=paid"),
+    ),
   ], useCsatMap ? "reg=paid" : undefined);
   return node("lead", "Leads", all.size, "neutral", [
     regNode,
