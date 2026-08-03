@@ -1,4 +1,7 @@
+"use client";
+
 import Link from "next/link";
+import { useState } from "react";
 import type { Attendance, AttendRow } from "@/lib/channels";
 import CalledVsAppeared from "./CalledVsAppeared";
 
@@ -8,6 +11,11 @@ import CalledVsAppeared from "./CalledVsAppeared";
 // other means the sheet has no status for them.
 
 const nf = (n: number) => n.toLocaleString("en-IN");
+// A source with fewer leads than this collapses into Small quantum, plus the
+// no-source bucket regardless of size. Same rule as the Source x action table.
+const SMALL_MAX = 10;
+const NO_SRC = "No CRM source";
+const isSmall = (r: AttendRow) => (r.leads ?? 0) < SMALL_MAX || r.label === NO_SRC;
 const pct = (a: number, b: number) => (b > 0 ? `${Math.round((a / b) * 100)}%` : "—");
 
 // "2026-07-30 06:36:29+00" -> "30 Jul, 12:06 IST"
@@ -21,7 +29,45 @@ function istStamp(raw: string | null): string | null {
   return `${d.getUTCDate()} ${MON[d.getUTCMonth()]}, ${p2(d.getUTCHours())}:${p2(d.getUTCMinutes())} IST`;
 }
 
-function Row({ r, qs, strong, showLeads }: { r: AttendRow; qs: string; strong?: boolean; showLeads?: boolean }) {
+
+// The tail as one row that expands. Its figures are the exact sum of its members,
+// so the table still adds up whether it is open or closed.
+function SmallSource({ rows, qs }: { rows: AttendRow[]; qs: string }) {
+  const [open, setOpen] = useState(false);
+  if (rows.length === 0) return null;
+  const sum = (f: (r: AttendRow) => number) => rows.reduce((a, r) => a + f(r), 0);
+  const agg: AttendRow = {
+    key: "__small__",
+    label: "Small quantum",
+    leads: sum((r) => r.leads ?? 0),
+    registered: sum((r) => r.registered),
+    given: sum((r) => r.given),
+    noShow: sum((r) => r.noShow),
+    noStatus: sum((r) => r.noStatus),
+  };
+  return (
+    <>
+      <tr className="sa-group">
+        <td>
+          <button type="button" className="sa-toggle" onClick={() => setOpen(!open)} aria-expanded={open}>
+            <span className={`sa-caret${open ? " on" : ""}`}>▸</span>
+            Small quantum
+            <span className="sa-count">{rows.length} sources</span>
+          </button>
+        </td>
+        <td className="tnum">{nf(agg.leads ?? 0)}</td>
+        <td className="tnum">{nf(agg.registered)}</td>
+        <td className="tnum cv-reg">{nf(agg.given)}</td>
+        <td className="tnum">{pct(agg.given, agg.registered)}</td>
+        <td className="tnum fc-bad">{nf(agg.noShow)}</td>
+        <td className="tnum">{nf(agg.noStatus)}</td>
+      </tr>
+      {open && rows.map((r) => <Row key={r.key} r={r} qs={qs} showLeads indent />)}
+    </>
+  );
+}
+
+function Row({ r, qs, strong, showLeads, indent }: { r: AttendRow; qs: string; strong?: boolean; showLeads?: boolean; indent?: boolean }) {
   // Each row carries its own filter so the list that opens is that row's students:
   // programme rows use signup_programs, source/UTM rows use the comma-split tag.
   const own = r.prog
@@ -43,7 +89,7 @@ function Row({ r, qs, strong, showLeads }: { r: AttendRow; qs: string; strong?: 
       : `/drill?${qs}`;
   return (
     <tr className={strong ? "co-strong" : undefined}>
-      <td>{r.label}</td>
+      <td className={indent ? "sa-child" : undefined}>{r.label}</td>
       {showLeads && (
         <td className="tnum">
           {(r.leads ?? 0) > 0
@@ -127,7 +173,8 @@ export default function TestAttendanceBlock({ data, qs }: { data: Attendance; qs
           </table>
         </div>
 
-        {/* Which source brought students who actually sat the test. */}
+        {/* Which source brought students who actually sat the test. The long tail
+            collapses so the handful that carry the round stay readable. */}
         {bySource.length > 0 && (
           <>
             <h4 className="ta-h">By source</h4>
@@ -135,7 +182,8 @@ export default function TestAttendanceBlock({ data, qs }: { data: Attendance; qs
               <table className="cv-table ta-table">
                 <Head first="Source" showLeads />
                 <tbody>
-                  {bySource.map((r) => <Row key={r.key} r={r} qs={qs} showLeads />)}
+                  {bySource.filter((r) => !isSmall(r)).map((r) => <Row key={r.key} r={r} qs={qs} showLeads />)}
+                  <SmallSource rows={bySource.filter(isSmall)} qs={qs} />
                 </tbody>
               </table>
             </div>
