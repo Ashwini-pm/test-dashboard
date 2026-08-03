@@ -91,6 +91,39 @@ async function pullTable(supaTable: string): Promise<Record<string, unknown>[]> 
   return chunks.flat();
 }
 
+// Internal test leads. Kept as an explicit id list rather than a name match:
+// "test" appears inside real names, and silently dropping a real student is worse
+// than carrying three fake ones.
+const TEST_LEAD_IDS = new Set(["000001", "0000002", "4407160"]);
+function isTestLead(r: Record<string, any>): boolean {
+  return TEST_LEAD_IDS.has(String(r.lead_id ?? "").trim())
+    || String(r.origin ?? "").trim() === "test";
+}
+
+// Effective CSAT source. The CRM's own category is the authority. Where the CRM
+// has none, fall back to the utm our signup form captured, but ONLY when it maps
+// cleanly onto a category the CRM already uses. Anything else stays empty and
+// shows as "No CRM source" rather than inventing a category.
+//
+// Lower confidence than the CRM value, deliberately narrow: when the CRM HAD a
+// source, our captured utm disagreed with it 3 times out of 3 against the
+// Influencer sheet. This only fires where the CRM has nothing at all, so the
+// choice is our utm or no attribution, and it recovers 6 of 39 leads.
+const UTM_TO_CATEGORY: Record<string, string> = {
+  influencers: "Influencers",
+  influencer: "Influencers",
+  organic: "Organic",
+  direct: "Direct",
+  collegedunia: "Collegedunia",
+  inbound: "Inbound",
+};
+function effectiveSource(r: Record<string, any>): string | null {
+  const crm = String(r.crm_source_category ?? "").trim();
+  if (crm) return crm;
+  const utm = String(r.raw_utm_source ?? "").trim().toLowerCase();
+  return UTM_TO_CATEGORY[utm] ?? null;
+}
+
 function repopulate(table: string, rows: Record<string, unknown>[]): void {
   const wipe = db.prepare(`DELETE FROM ${table}`);
   if (rows.length === 0) {
@@ -650,11 +683,13 @@ function overlayNsat4Csat(pulls: CsatPull): void {
         continue;
       }
       if (table === "lead_map") {
-        mirrorRaw("cohort_csat1", rows);
-        for (const r of rows) {
+        // filter before the raw mirror too, or the test rows survive in cohort_csat1
+        const real = rows.filter((r) => !isTestLead(r));
+        mirrorRaw("cohort_csat1", real);
+        for (const r of real) {
           const st = String(r.signup_tables ?? "");
           const tag = st === "bba" ? "CSAT-BBA" : st === "bca" ? "CSAT-BCA" : "CSAT-COMB";
-          insCsat.run(String(r.lead_id ?? ""), tag, r.registered ?? null, r.campaign_source ?? null, r.origin ?? null, r.crm_source_category ?? null, r.total_calls ?? null, r.connected_calls ?? null, r.first_signup ?? null, r.first_call_at ?? null, r.last_call_at ?? null, r.counsellor ?? null, r.name ?? null, r.phone ?? null, r.utm_campaign ?? null, r.crm_program ?? null, r.signup_programs ?? null, r.test_given ?? null, r.test_given_at ?? null, r.test_result ?? null, r.last_call_at ?? null, r.first_connected_at ?? null, r.last_connected_at ?? null, r.offer_letter ?? null, r.seat_booked ?? null, r.seat_booked_date ?? null);
+          insCsat.run(String(r.lead_id ?? ""), tag, r.registered ?? null, r.campaign_source ?? null, r.origin ?? null, effectiveSource(r), r.total_calls ?? null, r.connected_calls ?? null, r.first_signup ?? null, r.first_call_at ?? null, r.last_call_at ?? null, r.counsellor ?? null, r.name ?? null, r.phone ?? null, r.utm_campaign ?? null, r.crm_program ?? null, r.signup_programs ?? null, r.test_given ?? null, r.test_given_at ?? null, r.test_result ?? null, r.last_call_at ?? null, r.first_connected_at ?? null, r.last_connected_at ?? null, r.offer_letter ?? null, r.seat_booked ?? null, r.seat_booked_date ?? null);
           // one tag row per (lead, value); dedupe so a cell listing the same value
           // twice in different case does not count the lead twice
           const lid = String(r.lead_id ?? "");
@@ -664,7 +699,7 @@ function overlayNsat4Csat(pulls: CsatPull): void {
           // Collegedunia / Consultants / Youtube Channels / Marketing Events / Referral
           // all "Influencers" or "organic". UTM campaign name still comes from the form,
           // which is correct — that IS a form field.
-          for (const [kind, raw] of [["src", r.crm_source_category], ["utm", r.utm_campaign]] as const) {
+          for (const [kind, raw] of [["src", effectiveSource(r)], ["utm", r.utm_campaign]] as const) {
             const cell = String(raw ?? "").trim();
             const vals = cell ? cell.split(",").map((v) => v.trim()).filter(Boolean) : [];
             const seenK = new Set<string>();
