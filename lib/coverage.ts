@@ -30,6 +30,7 @@ export const PULLED: Record<string, string> = {
   nsat4_counselling: "NSAT-4 counselling slots",
   csat_counselling: "CSAT-1 counselling slots",
   csat_counselling_outcomes: "CSAT-1 panelist outcomes (counselling attendance)",
+  nsat_counselling_outcomes: "NSAT-4 panelist outcomes (counselling attendance, gates OL and seats)",
   ai_calls: "AI calling (narrowed to cohort leads)",
 };
 
@@ -52,6 +53,7 @@ export const IGNORED: Record<string, string> = {
   nsat4_parked_leads: "pipeline input to nsat4_lead_map",
   nsat4_test_results: "test scores; outcome already on nsat4_lead_map.test_result",
   nsat4_seat_bookings: "seat bookings; already written onto nsat4_lead_map",
+  panelist_ol_sb: "panelist OL/SB feed; the map's offer_letter and seat_booked are the authority",
 };
 
 export interface TableStatus {
@@ -140,6 +142,7 @@ export function auditOrphans(): { feed: string; orphans: number; note: string }[
   const checks: [string, string, string][] = [
     ["csat_slots", "csat_map", "CSAT-1 counselling slots"],
     ["csat_outcome", "csat_map", "CSAT-1 panelist outcomes"],
+    ["nsat_outcome", "nsat4_map", "NSAT-4 panelist outcomes"],
     ["nsat4_slots", "nsat4_map", "NSAT-4 counselling slots"],
   ];
   const out: { feed: string; orphans: number; note: string }[] = [];

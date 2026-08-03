@@ -479,7 +479,7 @@ async function fetchCsatProject(): Promise<CsatPull | null> {
   return Promise.all([
     // nsat4_counselling is pulled for its slot fields only. nsat4_lead_map stays
     // the NSAT-4 lead universe and the authority on offer letter / seat booked.
-    ...["nsat4", "bba", "bca", "combined", "nsat3_lead_map", "lead_map", "nsat4_lead_map", "nsat5_lead_map", "nsat4_counselling", "csat_counselling", "csat_counselling_outcomes"].map((t) => settle(t, pull(t))),
+    ...["nsat4", "bba", "bca", "combined", "nsat3_lead_map", "lead_map", "nsat4_lead_map", "nsat5_lead_map", "nsat4_counselling", "csat_counselling", "csat_counselling_outcomes", "nsat_counselling_outcomes"].map((t) => settle(t, pull(t))),
     // AI calls, narrowed to rows already resolved to a cohort lead. The lead ids
     // are stored on the row, so we never join on phone.
     settle("ai_calls", pull(
@@ -529,6 +529,11 @@ function overlayNsat4Csat(pulls: CsatPull): void {
   // source of counselling attendance: csat_counselling has the booking, this has
   // what happened. One row per submission, so a student can appear twice
   // (rescheduled, then held) — collapse to the latest per lead.
+  // NSAT panelist responses. Same shape as csat_outcome so the seat-booking and
+  // offer-letter gates read identically for both cohorts.
+  db.exec("DROP TABLE IF EXISTS nsat_outcome");
+  db.exec("CREATE TABLE nsat_outcome (lead_id TEXT PRIMARY KEY, status TEXT, submitted_at TEXT, panelist TEXT, likelihood INTEGER, motivation INTEGER, comms INTEGER, scholarship INTEGER, remarks TEXT, reschedule_reason TEXT)");
+  const insNOut = db.prepare("INSERT INTO nsat_outcome(lead_id,status,submitted_at,panelist,likelihood,motivation,comms,scholarship,remarks,reschedule_reason) VALUES (?,?,?,?,?,?,?,?,?,?) ON CONFLICT(lead_id) DO UPDATE SET status=excluded.status, submitted_at=excluded.submitted_at, panelist=excluded.panelist, likelihood=excluded.likelihood, motivation=excluded.motivation, comms=excluded.comms, scholarship=excluded.scholarship, remarks=excluded.remarks, reschedule_reason=excluded.reschedule_reason WHERE excluded.submitted_at > nsat_outcome.submitted_at");
   db.exec("DROP TABLE IF EXISTS csat_outcome");
   db.exec("CREATE TABLE csat_outcome (lead_id TEXT PRIMARY KEY, status TEXT, submitted_at TEXT, panelist TEXT, likelihood INTEGER, motivation INTEGER, comms INTEGER, scholarship INTEGER, remarks TEXT, reschedule_reason TEXT)");
   const insOut = db.prepare("INSERT INTO csat_outcome(lead_id,status,submitted_at,panelist,likelihood,motivation,comms,scholarship,remarks,reschedule_reason) VALUES (?,?,?,?,?,?,?,?,?,?) ON CONFLICT(lead_id) DO UPDATE SET status=excluded.status, submitted_at=excluded.submitted_at, panelist=excluded.panelist, likelihood=excluded.likelihood, motivation=excluded.motivation, comms=excluded.comms, scholarship=excluded.scholarship, remarks=excluded.remarks, reschedule_reason=excluded.reschedule_reason WHERE excluded.submitted_at > csat_outcome.submitted_at");
@@ -556,6 +561,7 @@ function overlayNsat4Csat(pulls: CsatPull): void {
     db.prepare("DELETE FROM leads WHERE nsat_round IN ('NSAT-4','CSAT','CSAT-BBA','CSAT-BCA','CSAT-COMB')").run();
     db.prepare("DELETE FROM nsat3_map").run();
     db.prepare("DELETE FROM csat_map").run();
+    db.prepare("DELETE FROM nsat_outcome").run();
     for (const { table, rows } of pulls) {
       if (table === "nsat3_lead_map") {
         mirrorRaw("cohort_nsat3", rows);
@@ -587,6 +593,16 @@ function overlayNsat4Csat(pulls: CsatPull): void {
         for (const [k, v] of acc) {
           const [coh, lid] = k.split("\u0000");
           insAi.run(lid, coh, v.reached ? 1 : 0, 1, v.last || null, v.lastConn || null, v.first || null, v.firstConn || null);
+        }
+        continue;
+      }
+      if (table === "nsat_counselling_outcomes") {
+        for (const r of rows) {
+          const lid = String(r.lead_id ?? "").trim();
+          if (!lid) continue;
+          insNOut.run(lid, r.status ?? null, String(r.submitted_at ?? ""), r.panelist_email ?? null,
+                      r.likelihood_seat ?? null, r.motivation ?? null, r.communication_skills ?? null,
+                      r.scholarship_reco ?? null, r.remarks ?? null, r.reschedule_reason ?? null);
         }
         continue;
       }

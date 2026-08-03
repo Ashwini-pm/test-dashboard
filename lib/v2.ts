@@ -110,8 +110,10 @@ export function stageCounts(ctx: Ctx, round?: string | null): StageCounts {
       ? q("SELECT COUNT(DISTINCT lead_id) n FROM nsat4_slots WHERE lead_id IN (SELECT lead_id FROM nsat4_map)")
       : q(jl("counselling_sessions", " AND x.scheduled_at IS NOT NULL")),
     held: n4 ? 0 : q(jl("counselling_sessions", " AND x.status='held'")),
-    offers: n4 ? fromN4("nullif(offer_letter,'') IS NOT NULL") : q(jl("offer_letters", COH)),
-    seats: n4 ? fromN4("seat_booked = 'Yes'") : q(jl("payments", " AND x.paid_at >= '2026-07-16'" + COH)),
+    // Panelist-verified only, the same rule CSAT-1 uses: the counselling funnel
+    // does not claim offers or seats no panelist ever recorded.
+    offers: n4 ? fromN4("nullif(offer_letter,'') IS NOT NULL AND lead_id IN (SELECT lead_id FROM nsat_outcome)") : q(jl("offer_letters", COH)),
+    seats: n4 ? fromN4("seat_booked = 'Yes' AND lead_id IN (SELECT lead_id FROM nsat_outcome)") : q(jl("payments", " AND x.paid_at >= '2026-07-16'" + COH)),
   };
 }
 
@@ -488,8 +490,11 @@ export function postTestTable(ctx: Ctx, round?: string | null): FunnelCallRow[] 
       ["fail", "Test failed", " AND m.test_result = 'Fail'"],
       // slot booked = has a booking_id in nsat4_counselling (mirrored to nsat4_slots)
       ["slot", "Slot booked", " AND m.lead_id IN (SELECT lead_id FROM nsat4_slots)"],
-      ["ol", "Offer letter", " AND nullif(m.offer_letter,'') IS NOT NULL"],
-      ["seat", "Seat booked", " AND m.seat_booked = 'Yes'"],
+      ["couns", "Counselling done", " AND m.lead_id IN (SELECT lead_id FROM nsat_outcome WHERE status LIKE 'Happening%')"],
+      ["ol", "Offer letter · counselled", " AND nullif(m.offer_letter,'') IS NOT NULL AND m.lead_id IN (SELECT lead_id FROM nsat_outcome)"],
+      ["ol_nc", "Offer letter · no panelist response", " AND nullif(m.offer_letter,'') IS NOT NULL AND m.lead_id NOT IN (SELECT lead_id FROM nsat_outcome)"],
+      ["seat", "Seat booked · counselled", " AND m.seat_booked = 'Yes' AND m.lead_id IN (SELECT lead_id FROM nsat_outcome)"],
+      ["seat_nc", "Seat booked · no panelist response", " AND m.seat_booked = 'Yes' AND m.lead_id NOT IN (SELECT lead_id FROM nsat_outcome)"],
     ];
     for (const [key, label, scope] of defs) {
       const cols = callCols(m, scope);
@@ -763,8 +768,13 @@ export function drill(ctx: Ctx, round: string | null | undefined, p: DrillParams
     if (p.pstage === "pass") { w.push("m.test_result = 'Pass'"); bits.push("test passed"); }
     if (p.pstage === "fail") { w.push("m.test_result = 'Fail'"); bits.push("test failed"); }
     if (p.pstage === "slot") { w.push("m.lead_id IN (SELECT lead_id FROM nsat4_slots)"); bits.push("counselling slot booked"); }
-    if (p.pstage === "ol")   { w.push("nullif(m.offer_letter,'') IS NOT NULL"); bits.push("offer letter"); }
-    if (p.pstage === "seat") { w.push("m.seat_booked = 'Yes'"); bits.push("seat booked"); }
+    const RESP = "m.lead_id IN (SELECT lead_id FROM nsat_outcome)";
+    if (p.pstage === "couns")   { w.push("m.lead_id IN (SELECT lead_id FROM nsat_outcome WHERE status LIKE 'Happening%')"); bits.push("counselling done"); }
+    if (p.pstage === "ol")      { w.push(`nullif(m.offer_letter,'') IS NOT NULL AND ${RESP}`); bits.push("offer letter, panelist verified"); }
+    if (p.pstage === "ol_nc")   { w.push(`nullif(m.offer_letter,'') IS NOT NULL AND NOT (${RESP})`); bits.push("offer letter, no panelist response"); }
+    if (p.pstage === "seat")    { w.push(`m.seat_booked = 'Yes' AND ${RESP}`); bits.push("seat booked, panelist verified"); }
+    if (p.pstage === "seat_nc") { w.push(`m.seat_booked = 'Yes' AND NOT (${RESP})`); bits.push("seat booked, no panelist response"); }
+    if (p.pstage === "seat_all"){ w.push("m.seat_booked = 'Yes'"); bits.push("seat booked, any"); }
   } else if (p.pstage && m.table !== "csat_map") {
     const inc2 = inClause(ctx, round);
     const S: Record<string, [string, string]> = {
@@ -1152,7 +1162,9 @@ export function sankeyTree(ctx: Ctx, round?: string | null): SNode {
   const olLive = inRound("offer_letters", "x.issued_at > date('now','-3 day')");
   const olExpiring = inRound("offer_letters", "x.issued_at <= date('now','-3 day') AND x.issued_at > date('now','-5 day')");
   const olExpired = inRound("offer_letters", "x.issued_at <= date('now','-5 day')");
-  const seatAll = isN4 ? fromN4("seat_booked='Yes'") : inRound("payments", "x.paid_at >= '2026-07-16'");
+  const seatAll = isN4
+    ? fromN4("seat_booked='Yes' AND lead_id IN (SELECT lead_id FROM nsat_outcome)")
+    : inRound("payments", "x.paid_at >= '2026-07-16'");
   // CSAT calling lives as aggregates on the map (total_calls / connected_calls),
   // not as call_logs rows, so the comms split must read the map for CSAT too.
   const attempted = mu

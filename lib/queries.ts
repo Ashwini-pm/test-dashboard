@@ -690,14 +690,16 @@ function funnelN3(round: Round = "NSAT-3", src?: Src): FunnelResult {
           AND nullif(m.offer_letter,'') IS NOT NULL
           AND m.lead_id IN (SELECT lead_id FROM csat_outcome)`)
     : useN4
-    ? c(`SELECT COUNT(*) n FROM nsat4_map WHERE nullif(offer_letter,'') IS NOT NULL`)
+    ? c(`SELECT COUNT(*) n FROM nsat4_map m WHERE nullif(m.offer_letter,'') IS NOT NULL
+          AND m.lead_id IN (SELECT lead_id FROM nsat_outcome)`)
     : c(`SELECT COUNT(*) n FROM offer_letters x ${jl(" AND x.lead_id IN (SELECT lead_id FROM counselling_sessions WHERE status IN ('held','no_show','reschedule'))")}`);
   // Seat = counselled (held) students who booked; pre-booked re-testers live on the Test card
   // Seats read the map's own seat_booked column. Note the map's seat data is
   // sourced from the NSAT sheet's SB Date, not crm_leads_6778: that Redash dump
   // filters lead_created >= 14 Jul and so misses bookings by students whose CRM
   // lead predates the round.
-  // A CSAT-1 seat only counts in the funnel when a panelist recorded the student:
+  // A seat only counts in the funnel when a panelist recorded the student, for
+  // CSAT-1 and NSAT-4 alike:
   // the counselling funnel should not claim seats it never touched. Seats with no
   // panelist response are real, but they are direct admissions — counted at lead
   // level in the Post test block instead.
@@ -705,7 +707,8 @@ function funnelN3(round: Round = "NSAT-3", src?: Src): FunnelResult {
     ? c(`SELECT COUNT(*) n FROM csat_map m WHERE m.round_tag IN (${inc}) AND m.seat_booked='Yes'
           AND m.lead_id IN (SELECT lead_id FROM csat_outcome)`)
     : useN4
-    ? c(`SELECT COUNT(*) n FROM nsat4_map WHERE seat_booked='Yes'`)
+    ? c(`SELECT COUNT(*) n FROM nsat4_map m WHERE m.seat_booked='Yes'
+          AND m.lead_id IN (SELECT lead_id FROM nsat_outcome)`)
     : c(`SELECT COUNT(*) n FROM payments x ${jl(" AND x.paid_at >= '2026-07-16' AND x.lead_id IN (SELECT lead_id FROM counselling_sessions WHERE status IN ('held','no_show','reschedule'))")}`);
   // AI before-test calling (context sub-block)
   const called = c(`SELECT COUNT(DISTINCT lead_id) n FROM call_logs WHERE nsat_round IN (${inc})`);
