@@ -138,24 +138,6 @@ export default function CalledVsAppeared({ data, qs }: { data: CalledAppeared; q
         </table>
       </div>
 
-      {top && bottom && top.key !== bottom.key && (
-        <div className="ta-gap">
-          Calling works, but only when both AI and a person get through to the same student:{" "}
-          <b>{pct(top.appeared, top.registered)}</b> of the students {top.label.toLowerCase()} connected with gave the test,
-          against <b>{pct(bottom.appeared, bottom.registered)}</b> of the ones nobody got through to.
-          {aiOnly && ` AI on its own gets ${pct(aiOnly.appeared, aiOnly.registered)}, barely better than no call at all.`}
-          <br />
-          <b>{nf(reachedNoShow)}</b> students registered, we got through to them on a call, and they still did not give
-          the test — the biggest group of the four. So the problem is not that we cannot reach them.
-        </div>
-      )}
-
-      <p className="ta-foot">
-        Registered students only, since nobody else was due to give the test. Calls counted here are every call to date,
-        not only calls made before the test day, so this shows what goes together, not what caused what. The four
-        groups do not overlap and add up to {nf(total)}, and so do the four rows below. Circle sizes follow the
-        numbers; the overlap is indicative.
-      </p>
       <p className="ta-foot">
         <Link href={`/drill?${qs}&tg=noshow`} className="sb-link">Open the list of registered students who did not give the test</Link>
       </p>

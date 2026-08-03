@@ -139,14 +139,6 @@ export default function TestAttendanceBlock({ data, qs }: { data: Attendance; qs
                 </tbody>
               </table>
             </div>
-            <p className="ta-foot">
-              Source is the CRM&apos;s own category, not the utm the signup form captured. The two disagree often and
-              the form tends to call everything Influencers or Organic, so this reads the CRM. One source per
-              student, so <b>these rows do add up to the cohort</b>. Compare sources on Gave test %, not on the
-              count: Influencers tops any count because it is {pct(bySource[0]?.registered ?? 0, all.registered)} of
-              the volume. A dash means that source brought leads but no registrations, so there was never a test to
-              give. Leads with no source in any feed sit under <b>Others</b>.
-            </p>
           </>
         )}
 
@@ -162,47 +154,11 @@ export default function TestAttendanceBlock({ data, qs }: { data: Attendance; qs
                 </tbody>
               </table>
             </div>
-            <p className="ta-foot">
-              Sorted by Gave test %, not by volume, because the two disagree. Names with fewer than{" "}
-              {minUtmReg} registrations are left out, or a name with 2 registrations and 1 test given would sit
-              on top at 50%. Values like &quot;(not set)&quot; and &quot;none&quot; are not campaign names, so they
-              are left out. <b>A student can be counted under two names here as well.</b>
-            </p>
           </>
         )}
 
         {calling && <CalledVsAppeared data={calling} qs={qs} />}
 
-        {best && worst && best.key !== worst.key && (
-          <div className="ta-gap">
-            <b>{best.label}</b> students give the test at {pct(best.given, best.registered)} against{" "}
-            <b>{worst.label}</b> at {pct(worst.given, worst.registered)}
-            {" "}— that gap matters more than the overall {pct(all.given, all.registered)}.
-          </div>
-        )}
-
-        {/* Volume and quality pull in opposite directions; a table sorted by
-            registrations hides that entirely. */}
-        {(() => {
-          if (byUtm.length < 2) return null;
-          const byVol = [...byUtm].sort((a, b) => b.registered - a.registered);
-          const biggest = byVol[0];
-          const rival = byVol.find((r) => r.key !== biggest.key && r.given / r.registered > biggest.given / biggest.registered * 1.5);
-          const zero = byUtm.filter((r) => r.given === 0);
-          if (!rival) return null;
-          const ratio = (rival.given / rival.registered) / (biggest.given / biggest.registered);
-          return (
-            <div className="ta-gap">
-              <b>{biggest.label}</b> brought the most registrations of anyone, {nf(biggest.registered)}, and only{" "}
-              {pct(biggest.given, biggest.registered)} of them gave the test. <b>{rival.label}</b> brought{" "}
-              {nf(rival.registered)} and {pct(rival.given, rival.registered)} gave it — the same effort,{" "}
-              {ratio >= 2 ? `more than ${Math.floor(ratio)} times` : "well over"} the yield.
-              {zero.length > 0 && (
-                <> {zero.map((z) => `${z.label} brought ${nf(z.registered)} registrations and not one gave the test`).join("; ")}.</>
-              )}
-            </div>
-          );
-        })()}
       </div>
     </section>
   );

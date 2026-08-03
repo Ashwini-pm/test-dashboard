@@ -760,9 +760,8 @@ export function contactFunnel(cohortKey: string, where = "", prog?: string | nul
   const nf = (n: number) => n.toLocaleString("en-IN");
   const hTot = count(P.hConn), aTot = count(P.aConn), bothN = count(`${P.hConn} AND ${P.aConn}`);
   const recon =
-    `AI connected ${nf(aTot)} = ${nf(bothN)} by both + ${nf(aTot - bothN)} by AI only. ` +
-    `A person connected ${nf(hTot)} = ${nf(bothN)} by both + ${nf(hTot - bothN)} by a person only. ` +
-    `The two overlap on ${nf(bothN)} students, which is why the channel tables cannot be added.`;
+    `AI connected ${nf(aTot)} = ${nf(bothN)} both + ${nf(aTot - bothN)} AI only` +
+    ` · a person connected ${nf(hTot)} = ${nf(bothN)} both + ${nf(hTot - bothN)} person only`;
   const approx = c.humanConnExact ? "" : " · Connected is not windowed here, see the note below";
   const out = [
     { ...build("both", "Human and AI combined",

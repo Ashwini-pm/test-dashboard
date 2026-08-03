@@ -67,26 +67,6 @@ export default function ContactFunnel({
         </header>
 
         {funnels.map((f) => <Table key={f.key} f={f} qs={qs} labels={labels} />)}
-
-        <p className="ta-foot">
-          Percentages are of the stage to the left, so each row reads as one cohort&apos;s journey.
-          Connected and Not connected add back to Touched. The two channels are never added: the same
-          student is dialled by a person and by AI.
-          {" "}<b>Offer letter and seat booked count only leads with a panelist response.</b> A CRM
-          outcome on a lead that never went through counselling is a lead-level result, not
-          something the counselling funnel earned. Contact after the test day is excluded here, since it cannot explain
-          whether someone sat the test. Every number opens the lead list.
-          {!humanConnExact && (
-            <>
-              {" "}<b>One caveat on human Connected in this round:</b> the CRM feed carries no
-              first-connected timestamp here, so Connected reads &quot;dialled before the test and
-              connected at some point&quot; rather than &quot;connected before the test&quot;. It stays a
-              subset of Touched, so the table still adds up, but it can credit a call that landed
-              after the test. Adding a first-connected column to the CRM query makes it exact, as it
-              already is for AI, which keeps per-call timestamps.
-            </>
-          )}
-        </p>
       </div>
     </section>
   );

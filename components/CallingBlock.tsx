@@ -130,23 +130,6 @@ export default function CallingBlock({
           </table>
         </div>
 
-        <div className="ta-gap">
-          AI connects with <b>{pct(all.ai.connected, all.ai.dialled)}</b> of the students it dials, people with{" "}
-          <b>{pct(all.human.connected, all.human.dialled)}</b>. But AI is pointed almost entirely at students who have
-          already registered: of {unreg ? nf(unreg.leads) : "—"} unregistered leads it has dialled{" "}
-          <b>{unreg ? nf(unreg.ai.dialled) : "—"}</b>.
-          <br />
-          People dialled <b>{nf(all.human.notConnected)}</b> leads and never got through to any of them — the largest
-          wasted-effort bucket on this page.
-        </div>
-
-        <p className="ta-foot">
-          The two channels are never added together: the same student can be dialled by both, so a total would count
-          them twice. <b>No calling data</b> ({nf(all.human.noData ?? 0)} leads) means the CRM dump has no row for that
-          lead, so we cannot say whether anyone called — it is kept apart from <b>Never dialled</b>, which is a real
-          zero. Human calling refreshes every 10 minutes; AI call data loads on demand, so its columns are as of the
-          last sync rather than live.
-        </p>
       </div>
     </section>
   );
