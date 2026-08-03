@@ -1597,3 +1597,12 @@ table.list tbody tr:hover td {
 .cf-cap { display: block; margin: -2px 0 8px; }
 .cf-table th:first-child, .cf-table td:first-child { min-width: 168px; }
 .cf-table .cf-strong { font-weight: 600; }
+
+/* Programme bifurcation dropdown, next to the round pills (CSAT All tab). */
+.progsel { display: inline-flex; align-items: center; gap: 8px; margin-left: 12px; font-size: 13px; }
+.progsel > span { color: var(--muted, #6b7280); white-space: nowrap; }
+.progsel select {
+  font: inherit; padding: 5px 8px; border-radius: 8px; cursor: pointer;
+  border: 1px solid var(--line, #e5e7eb); background: var(--card, #fff); color: inherit;
+}
+.progsel.busy { opacity: .55; }

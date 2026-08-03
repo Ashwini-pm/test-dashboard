@@ -347,10 +347,31 @@ function csatMapReady(): boolean {
 }
 const CSAT_ROUND_SET = new Set<Round>(["CSAT", "CSAT-BBA", "CSAT-BCA", "CSAT-COMB"]);
 // round is a fixed enum value (never user free-text) so interpolation is safe.
-const csatMapWhere = (round: Round, paidOnly: boolean): string => {
+// Programme bifurcation for CSAT (the All tab). CRM programme is the authority;
+// where the CRM has none, fall back to the programme they signed up for, which
+// recovers 222 leads. Anything outside BBA / BCA / BTECH lands in Others, and so
+// does a blank, so the four buckets always add back to the round total.
+export type Prog = "BBA" | "BCA" | "BTECH" | "OTHER";
+export const PROG_VALUES: Prog[] = ["BBA", "BCA", "BTECH", "OTHER"];
+const progExpr = (a: string) => {
+  const q = a ? `${a}.` : "";
+  return `upper(coalesce(nullif(${q}crm_program,''), nullif(${q}signup_programs,''), ''))`;
+};
+/** " AND (...)" for the chosen programme, or "" for all. `alias` is "m" or "". */
+export function progWhere(prog: string | null | undefined, alias = "m"): string {
+  if (!prog || !PROG_VALUES.includes(prog as Prog)) return "";
+  const e = progExpr(alias);
+  return prog === "OTHER"
+    ? ` AND ${e} NOT IN ('BBA','BCA','BTECH')`
+    : ` AND ${e} = '${prog}'`;
+}
+
+const csatMapWhere = (round: Round, paidOnly: boolean, prog?: string | null): string => {
   const parts: string[] = [];
   if (round !== "CSAT") parts.push(`round_tag='${round}'`);
   if (paidOnly) parts.push(`registered='paid'`);
+  const pw = progWhere(prog, "").replace(/^ AND /, "");
+  if (pw) parts.push(pw);
   return parts.length ? " WHERE " + parts.join(" AND ") : "";
 };
 
@@ -507,10 +528,10 @@ export function alerts(round: Round): AlertCard[] {
 
 export interface FunnelResult { base: number; rows: FunnelRow[] }
 
-export function funnel(round: Round, src?: Src): FunnelResult {
+export function funnel(round: Round, src?: Src, prog?: string | null): FunnelResult {
   // NSAT-4 and CSAT use the same real-stage funnel layout as NSAT-3; only
   // NSAT-2/Combined keep the legacy canonical-stages view.
-  if (round === "NSAT-3" || round === "NSAT-4" || round === "NSAT-5" || round.startsWith("CSAT")) return funnelN3(round, src);
+  if (round === "NSAT-3" || round === "NSAT-4" || round === "NSAT-5" || round.startsWith("CSAT")) return funnelN3(round, src, prog);
   return funnelN2(round);
 }
 
@@ -603,7 +624,11 @@ function funnelN2(round: Round): FunnelResult {
   return { base, rows };
 }
 
-function funnelN3(round: Round = "NSAT-3", src?: Src): FunnelResult {
+function funnelN3(round: Round = "NSAT-3", src?: Src, prog?: string | null): FunnelResult {
+  // Programme filter, CSAT only. PW is for queries that alias the map as `m`,
+  // PW0 for the ones that select from csat_map unaliased.
+  const PW = progWhere(prog, "m");
+  const PW0 = progWhere(prog, "");
   const inc = inClause(round);
   const S = srcClause(src);
   const c = (sql: string) => int(db.prepare(sql).get() as any);
@@ -622,7 +647,7 @@ function funnelN3(round: Round = "NSAT-3", src?: Src): FunnelResult {
     : useNsat3
     ? c(`SELECT COUNT(*) n FROM nsat3_map`)
     : useCsat
-    ? c(`SELECT COUNT(*) n FROM csat_map${csatMapWhere(round, false)}`)
+    ? c(`SELECT COUNT(*) n FROM csat_map${csatMapWhere(round, false, prog)}`)
     : c(`SELECT COUNT(*) n FROM leads l WHERE l.nsat_round IN (${inc})${S}`);
   const reg = useN5
     ? c(`SELECT COUNT(*) n FROM cohort_nsat5 WHERE registered='paid'`)
@@ -631,7 +656,7 @@ function funnelN3(round: Round = "NSAT-3", src?: Src): FunnelResult {
     : useNsat3
     ? c(`SELECT COUNT(*) n FROM nsat3_map WHERE reg_status='paid'`)
     : useCsat
-    ? c(`SELECT COUNT(*) n FROM csat_map${csatMapWhere(round, true)}`)
+    ? c(`SELECT COUNT(*) n FROM csat_map${csatMapWhere(round, true, prog)}`)
     : c(`SELECT COUNT(DISTINCT x.lead_id) n FROM registrations x ${jl("")}`);
   // NSAT-4 carries the test outcome on its lead map (test_result); the base
   // test_results table has no NSAT-4 rows. Both Pass and Fail are recorded now,
@@ -641,7 +666,7 @@ function funnelN3(round: Round = "NSAT-3", src?: Src): FunnelResult {
   // purpose: one is a no-show, the other is missing information.
   const useCsatTest = CSAT_ROUND_SET.has(round) && csatMapReady();
   const csatTest = (cond: string) =>
-    c(`SELECT COUNT(*) n FROM csat_map WHERE round_tag IN (${inc}) AND registered='paid' AND ${cond}`);
+    c(`SELECT COUNT(*) n FROM csat_map WHERE round_tag IN (${inc})${PW0} AND registered='paid' AND ${cond}`);
   const tGiven = useCsatTest ? csatTest("test_given='Test_Given'") : 0;
   const tNoShow = useCsatTest ? csatTest("test_given='Test_Not_Appear'") : 0;
   const tNoStatus = useCsatTest ? csatTest("nullif(test_given,'') IS NULL") : 0;
@@ -666,7 +691,7 @@ function funnelN3(round: Round = "NSAT-3", src?: Src): FunnelResult {
   // "counselling done" cannot be derived and stays 0.
   const couns = useCsatTest
     ? c(`SELECT COUNT(DISTINCT s.lead_id) n FROM csat_slots s
-          JOIN csat_map m ON m.lead_id = s.lead_id WHERE m.round_tag IN (${inc})`)
+          JOIN csat_map m ON m.lead_id = s.lead_id WHERE m.round_tag IN (${inc})${PW}`)
     : useN4
     ? c(`SELECT COUNT(DISTINCT lead_id) n FROM nsat4_slots WHERE lead_id IN (SELECT lead_id FROM nsat4_map)`)
     : c(`SELECT COUNT(*) n FROM counselling_sessions x ${jl(" AND x.scheduled_at IS NOT NULL")}`); // slots booked (day tabs)
@@ -674,7 +699,7 @@ function funnelN3(round: Round = "NSAT-3", src?: Src): FunnelResult {
   // feed existed there was no attendance anywhere, hence the 0 fallback.
   const csatHeld = useCsatTest
     ? c(`SELECT COUNT(*) n FROM csat_outcome o JOIN csat_map m ON m.lead_id = o.lead_id
-          WHERE m.round_tag IN (${inc}) AND o.status LIKE 'Happening%'`)
+          WHERE m.round_tag IN (${inc})${PW} AND o.status LIKE 'Happening%'`)
     : 0;
   const held = useCsatTest
     ? csatHeld
@@ -686,7 +711,7 @@ function funnelN3(round: Round = "NSAT-3", src?: Src): FunnelResult {
   // panelist actually recorded the student. The rest are real offers but were not
   // produced by counselling, so they sit at lead level in the Post test block.
   const offers = useCsatTest
-    ? c(`SELECT COUNT(*) n FROM csat_map m WHERE m.round_tag IN (${inc})
+    ? c(`SELECT COUNT(*) n FROM csat_map m WHERE m.round_tag IN (${inc})${PW}
           AND nullif(m.offer_letter,'') IS NOT NULL
           AND m.lead_id IN (SELECT lead_id FROM csat_outcome)`)
     : useN4
@@ -704,7 +729,7 @@ function funnelN3(round: Round = "NSAT-3", src?: Src): FunnelResult {
   // panelist response are real, but they are direct admissions — counted at lead
   // level in the Post test block instead.
   const seats = useCsatTest
-    ? c(`SELECT COUNT(*) n FROM csat_map m WHERE m.round_tag IN (${inc}) AND m.seat_booked='Yes'
+    ? c(`SELECT COUNT(*) n FROM csat_map m WHERE m.round_tag IN (${inc})${PW} AND m.seat_booked='Yes'
           AND m.lead_id IN (SELECT lead_id FROM csat_outcome)`)
     : useN4
     ? c(`SELECT COUNT(*) n FROM nsat4_map m WHERE m.seat_booked='Yes'
@@ -742,7 +767,7 @@ function funnelN3(round: Round = "NSAT-3", src?: Src): FunnelResult {
     try {
       rows2 = db.prepare(
         `SELECT coalesce(nullif(signup_programs,''),'no signup (CRM-only lead)') p, COUNT(*) n
-           FROM csat_map WHERE round_tag IN (${inc})${extraWhere}
+           FROM csat_map WHERE round_tag IN (${inc})${PW0}${extraWhere}
           GROUP BY 1 ORDER BY n DESC`
       ).all() as { p: string; n: number }[];
     } catch { return; }
@@ -853,7 +878,7 @@ function funnelN3(round: Round = "NSAT-3", src?: Src): FunnelResult {
       useCsatTest
         ? `SELECT s.call_date d, COUNT(*) n, SUM(CASE WHEN s.panelist IS NOT NULL AND s.panelist<>'' THEN 1 ELSE 0 END) wp
              FROM csat_slots s JOIN csat_map m ON m.lead_id = s.lead_id
-            WHERE s.call_date IS NOT NULL AND m.round_tag IN (${inc}) GROUP BY d ORDER BY d`
+            WHERE s.call_date IS NOT NULL AND m.round_tag IN (${inc})${PW} GROUP BY d ORDER BY d`
         : useN4
         ? `SELECT call_date d, COUNT(*) n, SUM(CASE WHEN panelist IS NOT NULL AND panelist<>'' THEN 1 ELSE 0 END) wp FROM nsat4_slots WHERE call_date IS NOT NULL AND lead_id IN (SELECT lead_id FROM nsat4_map) GROUP BY d ORDER BY d`
         : `SELECT substr(x.scheduled_at,1,10) d, COUNT(*) n, SUM(CASE WHEN x.rep_id IS NOT NULL AND x.rep_id<>'' THEN 1 ELSE 0 END) wp FROM counselling_sessions x JOIN leads l ON l.lead_id=x.lead_id WHERE l.nsat_round IN (${inc}) AND x.scheduled_at IS NOT NULL GROUP BY d ORDER BY d`
@@ -868,7 +893,7 @@ function funnelN3(round: Round = "NSAT-3", src?: Src): FunnelResult {
   const firstSlot = useN4
     ? (db.prepare("SELECT min(call_date) d FROM nsat4_slots WHERE call_date IS NOT NULL AND lead_id IN (SELECT lead_id FROM nsat4_map)").get() as any)?.d ?? null
     : useCsatTest
-    ? (db.prepare(`SELECT min(s.call_date) d FROM csat_slots s JOIN csat_map m ON m.lead_id=s.lead_id WHERE s.call_date IS NOT NULL AND m.round_tag IN (${inc})`).get() as any)?.d ?? null
+    ? (db.prepare(`SELECT min(s.call_date) d FROM csat_slots s JOIN csat_map m ON m.lead_id=s.lead_id WHERE s.call_date IS NOT NULL AND m.round_tag IN (${inc})${PW}`).get() as any)?.d ?? null
     : null;
   main(
     "counselling",
@@ -883,7 +908,7 @@ function funnelN3(round: Round = "NSAT-3", src?: Src): FunnelResult {
       : "counselling not started yet"
   );
   const offersUnverified = useCsatTest
-    ? c(`SELECT COUNT(*) n FROM csat_map m WHERE m.round_tag IN (${inc})
+    ? c(`SELECT COUNT(*) n FROM csat_map m WHERE m.round_tag IN (${inc})${PW}
           AND nullif(m.offer_letter,'') IS NOT NULL
           AND m.lead_id NOT IN (SELECT lead_id FROM csat_outcome)`)
     : 0;
@@ -896,7 +921,7 @@ function funnelN3(round: Round = "NSAT-3", src?: Src): FunnelResult {
       : "no offer feed yet"
   );
   const seatsUnverified = useCsatTest
-    ? c(`SELECT COUNT(*) n FROM csat_map m WHERE m.round_tag IN (${inc}) AND m.seat_booked='Yes'
+    ? c(`SELECT COUNT(*) n FROM csat_map m WHERE m.round_tag IN (${inc})${PW} AND m.seat_booked='Yes'
           AND m.lead_id NOT IN (SELECT lead_id FROM csat_outcome)`)
     : 0;
   main(

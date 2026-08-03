@@ -3,7 +3,7 @@ import { ensureFresh, loadState } from "@/lib/db";
 import {
   parseCtx, stageCounts, roundOptions, defaultRound, ctxRounds, sankeyTree, sourceStages, sourceLegend,
   coverageAvailable, actionCoverage, untouchedAgeing, sourceAction, speedToLead,
-  preTestTable, postTestTable,
+  preTestTable, postTestTable, progOptions,
 } from "@/lib/v2";
 import Sankey from "@/components/Sankey";
 import SourcePie from "@/components/SourcePie";
@@ -14,6 +14,7 @@ import { ActionCoverage, UntouchedAgeing, SourceActionTable, SpeedToLead } from 
 import { funnel, type Round } from "@/lib/queries";
 import FunnelView from "@/components/FunnelView";
 import RoundSelect from "@/components/RoundSelect";
+import ProgSelect from "@/components/ProgSelect";
 
 export const dynamic = "force-dynamic";
 // cold-start hydrate pulls ~20 tables; the default 10s limit was too tight
@@ -31,7 +32,12 @@ export default async function Overview({ searchParams }: { searchParams: Promise
   const s = stageCounts(ctx, round);
   // CSAT "All" spans BBA/BCA/Combined -> use the combined "CSAT" funnel; else the single round.
   const funnelRound = ctx === "CSAT" && ctxRounds(ctx, round).length > 1 ? "CSAT" : ctxRounds(ctx, round)[0];
-  const f = funnel(funnelRound as Round);
+  // Programme bifurcation, CSAT All tab only. The BBA and BCA tabs are already a
+  // programme split, so the dropdown would duplicate them there.
+  const progAll = ctx === "CSAT" && ctxRounds(ctx, round).length > 1;
+  const progOpts = progAll ? progOptions(ctx, round) : [];
+  const prog = progAll && progOpts.some((o) => o.value === sp.prog) ? (sp.prog as string) : "";
+  const f = funnel(funnelRound as Round, undefined, prog || null);
   const tree = sankeyTree(ctx, round);
   const srcStages = sourceStages(ctx, round);
   // base query for drill-down links (no leading &)
@@ -68,6 +74,7 @@ export default async function Overview({ searchParams }: { searchParams: Promise
         </div>
         <div className="spacer" />
         <RoundSelect options={roundOptions(ctx)} current={round} />
+        {progOpts.length > 1 && <ProgSelect options={progOpts} current={prog} />}
       </div>
 
 

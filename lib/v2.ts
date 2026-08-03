@@ -1,4 +1,5 @@
 import db from "./db";
+import { progWhere, PROG_VALUES } from "./queries";
 
 // ---------------------------------------------------------------------------
 // NSAT Dashboard V2 — founder/CBO cockpit logic.
@@ -1290,4 +1291,24 @@ export function sankeyTree(ctx: Ctx, round?: string | null): SNode {
     regNode,
     node("no_reg", "Not registered", all.size - sReg.size, "bad", comms(diff(all, reg), "no_reg", "reg=unpaid"), useCsatMap ? "reg=unpaid" : undefined),
   ], useCsatMap ? "stage=lead" : undefined);
+}
+
+// Programme option counts for the CSAT All-tab dropdown. Counted off the same
+// expression the filter uses, so the label and the filtered view always agree.
+export function progOptions(ctx: Ctx, round?: string | null):
+  { value: string; label: string; n: number }[] {
+  if (ctx !== "CSAT" || !hasRows("csat_map")) return [];
+  const inc = inClause(ctx, round);
+  const LABEL: Record<string, string> = { BBA: "BBA", BCA: "BCA", BTECH: "B.Tech", OTHER: "Others" };
+  const out: { value: string; label: string; n: number }[] = [];
+  for (const v of PROG_VALUES) {
+    let n = 0;
+    try {
+      n = Number((db.prepare(
+        `SELECT COUNT(*) n FROM csat_map m WHERE m.round_tag IN (${inc})${progWhere(v, "m")}`
+      ).get() as { n?: number } | undefined)?.n ?? 0);
+    } catch { n = 0; }
+    if (n > 0) out.push({ value: v, label: LABEL[v] ?? v, n });
+  }
+  return out;
 }
