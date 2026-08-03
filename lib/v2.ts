@@ -110,7 +110,10 @@ export function stageCounts(ctx: Ctx, round?: string | null): StageCounts {
     slotBooked: n4
       ? q("SELECT COUNT(DISTINCT lead_id) n FROM nsat4_slots WHERE lead_id IN (SELECT lead_id FROM nsat4_map)")
       : q(jl("counselling_sessions", " AND x.scheduled_at IS NOT NULL")),
-    held: n4 ? 0 : q(jl("counselling_sessions", " AND x.status='held'")),
+    // NSAT-4 attendance is the panelist form, same as CSAT-1's.
+    held: n4
+      ? fromN4("lead_id IN (SELECT lead_id FROM nsat_outcome WHERE status LIKE 'Happening%')")
+      : q(jl("counselling_sessions", " AND x.status='held'")),
     // Panelist-verified only, the same rule CSAT-1 uses: the counselling funnel
     // does not claim offers or seats no panelist ever recorded.
     offers: n4 ? fromN4("nullif(offer_letter,'') IS NOT NULL AND lead_id IN (SELECT lead_id FROM nsat_outcome)") : q(jl("offer_letters", COH)),
@@ -1197,13 +1200,19 @@ export function sankeyTree(ctx: Ctx, round?: string | null): SNode {
     : isN4
     ? ids("SELECT DISTINCT lead_id FROM nsat4_slots")
     : inRound("counselling_sessions", "x.scheduled_at IS NOT NULL");
-  // NSAT-4's counselling sheet records the booking, never the attendance, so
-  // "held" is genuinely unknown there and must not gate the offer/seat sets.
+  // NSAT-4 records attendance now: the panelist form syncs into nsat_outcome, the
+  // same source CSAT-1 uses. Before that feed existed this was an empty set and
+  // the Sankey had no Counselled node for the round.
   const held = isCsat
     ? ids(`SELECT o.lead_id FROM csat_outcome o JOIN csat_map m ON m.lead_id=o.lead_id WHERE o.status LIKE 'Happening%'${mu?.where ?? ""}`)
-    : isN4 ? new Set<string>() : inRound("counselling_sessions", "x.status='held'");
+    : isN4 ? fromN4("lead_id IN (SELECT lead_id FROM nsat_outcome WHERE status LIKE 'Happening%')")
+    : inRound("counselling_sessions", "x.status='held'");
   const cohort = isN4 ? all : inRound("counselling_sessions", "x.status IN ('held','no_show','reschedule')");
-  const olAll = isN4 ? fromN4("nullif(offer_letter,'') IS NOT NULL") : inRound("offer_letters");
+  // Panelist-gated, matching the funnel and the cards. Ungated it read 31 against
+  // the funnel's 23 and the two views contradicted each other.
+  const olAll = isN4
+    ? fromN4("nullif(offer_letter,'') IS NOT NULL AND lead_id IN (SELECT lead_id FROM nsat_outcome)")
+    : inRound("offer_letters");
   // OL age buckets (business rule): live = first 3 days, expiring = day 3-4, expired = 5+ days
   const olLive = inRound("offer_letters", "x.issued_at > date('now','-3 day')");
   const olExpiring = inRound("offer_letters", "x.issued_at <= date('now','-3 day') AND x.issued_at > date('now','-5 day')");

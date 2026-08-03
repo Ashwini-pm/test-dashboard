@@ -64,7 +64,10 @@ export default async function Overview({ searchParams }: { searchParams: Promise
   // The four numbers the CBO tracks — same funnel everywhere, that's the point.
   // NSAT-4's counselling sheet records the booking, not the attendance, so a
   // "Counselled" card there could only ever read 0. Show the number that exists.
-  const slotsOnly = ctx === "NSAT" && round === "NSAT-4";
+  // NSAT-4 used to show Slot booked here because no attendance existed. The
+  // panelist form now feeds nsat_outcome, so show Counselled like every other
+  // round, and only fall back to Slot booked if that feed is genuinely empty.
+  const slotsOnly = ctx === "NSAT" && round === "NSAT-4" && s.held === 0;
   const kpis: [string, number][] = [
     ["Leads", s.leads],
     ["Test given", s.appeared],
