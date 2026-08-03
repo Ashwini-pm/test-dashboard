@@ -661,14 +661,22 @@ function funnelN3(round: Round = "NSAT-3", src?: Src): FunnelResult {
   // column, so "counselling done" is genuinely unknowable — held stays 0 rather
   // than being faked from the booking. Every NSAT-4 slot is 30 Jul onward, so
   // nothing has been held yet anyway.
-  const couns = useN4
+  // CSAT-1 slots live in csat_counselling (mirrored to csat_slots), scoped to the
+  // round pill through csat_map. Same as NSAT-4: no attendance column exists, so
+  // "counselling done" cannot be derived and stays 0.
+  const couns = useCsatTest
+    ? c(`SELECT COUNT(DISTINCT s.lead_id) n FROM csat_slots s
+          JOIN csat_map m ON m.lead_id = s.lead_id WHERE m.round_tag IN (${inc})`)
+    : useN4
     ? c(`SELECT COUNT(DISTINCT lead_id) n FROM nsat4_slots WHERE lead_id IN (SELECT lead_id FROM nsat4_map)`)
     : c(`SELECT COUNT(*) n FROM counselling_sessions x ${jl(" AND x.scheduled_at IS NOT NULL")}`); // slots booked (day tabs)
-  const held = useN4
+  const held = useN4 || useCsatTest
     ? 0
     : c(`SELECT COUNT(DISTINCT x.lead_id) n FROM counselling_sessions x ${jl(" AND x.status='held'")}`); // counselling actually done
   // NSAT-flow offers only: CRM also holds direct-admission offers (never tested)
-  const offers = useN4
+  const offers = useCsatTest
+    ? c(`SELECT COUNT(*) n FROM csat_map WHERE round_tag IN (${inc}) AND nullif(offer_letter,'') IS NOT NULL`)
+    : useN4
     ? c(`SELECT COUNT(*) n FROM nsat4_map WHERE nullif(offer_letter,'') IS NOT NULL`)
     : c(`SELECT COUNT(*) n FROM offer_letters x ${jl(" AND x.lead_id IN (SELECT lead_id FROM counselling_sessions WHERE status IN ('held','no_show','reschedule'))")}`);
   // Seat = counselled (held) students who booked; pre-booked re-testers live on the Test card
@@ -676,7 +684,9 @@ function funnelN3(round: Round = "NSAT-3", src?: Src): FunnelResult {
   // sourced from the NSAT sheet's SB Date, not crm_leads_6778: that Redash dump
   // filters lead_created >= 14 Jul and so misses bookings by students whose CRM
   // lead predates the round.
-  const seats = useN4
+  const seats = useCsatTest
+    ? c(`SELECT COUNT(*) n FROM csat_map WHERE round_tag IN (${inc}) AND seat_booked='Yes'`)
+    : useN4
     ? c(`SELECT COUNT(*) n FROM nsat4_map WHERE seat_booked='Yes'`)
     : c(`SELECT COUNT(*) n FROM payments x ${jl(" AND x.paid_at >= '2026-07-16' AND x.lead_id IN (SELECT lead_id FROM counselling_sessions WHERE status IN ('held','no_show','reschedule'))")}`);
   // AI before-test calling (context sub-block)
@@ -807,7 +817,11 @@ function funnelN3(round: Round = "NSAT-3", src?: Src): FunnelResult {
     const MON = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
     // Day numbering derived from the actual booked dates (Day 1 = earliest), nothing hardcoded
     const days = db.prepare(
-      useN4
+      useCsatTest
+        ? `SELECT s.call_date d, COUNT(*) n, SUM(CASE WHEN s.panelist IS NOT NULL AND s.panelist<>'' THEN 1 ELSE 0 END) wp
+             FROM csat_slots s JOIN csat_map m ON m.lead_id = s.lead_id
+            WHERE s.call_date IS NOT NULL AND m.round_tag IN (${inc}) GROUP BY d ORDER BY d`
+        : useN4
         ? `SELECT call_date d, COUNT(*) n, SUM(CASE WHEN panelist IS NOT NULL AND panelist<>'' THEN 1 ELSE 0 END) wp FROM nsat4_slots WHERE call_date IS NOT NULL AND lead_id IN (SELECT lead_id FROM nsat4_map) GROUP BY d ORDER BY d`
         : `SELECT substr(x.scheduled_at,1,10) d, COUNT(*) n, SUM(CASE WHEN x.rep_id IS NOT NULL AND x.rep_id<>'' THEN 1 ELSE 0 END) wp FROM counselling_sessions x JOIN leads l ON l.lead_id=x.lead_id WHERE l.nsat_round IN (${inc}) AND x.scheduled_at IS NOT NULL GROUP BY d ORDER BY d`
     ).all() as any[];
@@ -820,13 +834,19 @@ function funnelN3(round: Round = "NSAT-3", src?: Src): FunnelResult {
   // First scheduled NSAT-4 session, straight from the data — nothing hardcoded.
   const firstSlot = useN4
     ? (db.prepare("SELECT min(call_date) d FROM nsat4_slots WHERE call_date IS NOT NULL AND lead_id IN (SELECT lead_id FROM nsat4_map)").get() as any)?.d ?? null
+    : useCsatTest
+    ? (db.prepare(`SELECT min(s.call_date) d FROM csat_slots s JOIN csat_map m ON m.lead_id=s.lead_id WHERE s.call_date IS NOT NULL AND m.round_tag IN (${inc})`).get() as any)?.d ?? null
     : null;
   main(
     "counselling",
     "Counselling done",
     held,
-    useN4 && firstSlot
-      ? `no session held yet · first one is ${firstSlot}`
+    (useN4 || useCsatTest) && firstSlot
+      // Slot days come and go, so do not claim "not held yet" once the date has
+      // passed — the honest statement is that attendance is never recorded.
+      ? (String(firstSlot) >= new Date().toISOString().slice(0, 10)
+          ? `first session ${firstSlot} · attendance is not recorded`
+          : `slots ran from ${firstSlot} · attendance is not recorded`)
       : "counselling not started yet"
   );
   main("offer_letter", "Offer Letter", offers, "no offer feed yet");

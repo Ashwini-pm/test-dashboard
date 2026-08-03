@@ -13,6 +13,9 @@ const TABS = [
   { href: "/students", label: "Students", icon: IconLeads, match: (p: string) => p.startsWith("/students") },
   { href: "/comms", label: "Communication", icon: IconMatrix, match: (p: string) => p.startsWith("/comms") },
   { href: "/cohort", label: "Cohorts", icon: IconGrid, match: (p: string) => p.startsWith("/cohort") },
+  // Data coverage: what exists in Supabase vs what the dashboard shows. Check this
+  // after any pipeline change instead of waiting to spot a blank row on a page.
+  { href: "/coverage", label: "Data coverage", icon: IconMatrix, match: (p: string) => p.startsWith("/coverage") },
 ];
 
 export default function Sidebar() {

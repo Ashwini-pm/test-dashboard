@@ -1583,3 +1583,11 @@ table.list tbody tr:hover td {
 .cb-a { color: var(--blue); }
 .cb-table thead th.cb-h, .cb-table thead th.cb-a { font-weight: 700; }
 .cb-pct { font-weight: 700; }
+
+/* ---- data coverage page --------------------------------------------------- */
+.dc-list { margin: 4px 0 0 18px; font-size: 13px; line-height: 1.7; }
+.dc-note { color: var(--muted); font-size: 12px; white-space: normal; max-width: 520px; }
+.dc-ok { color: var(--green); font-weight: 600; }
+.dc-warn { color: #a07c00; font-weight: 600; }
+.dc-bad { color: var(--red); font-weight: 700; }
+.dc-mute { color: var(--text-faint); }
