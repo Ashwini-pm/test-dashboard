@@ -670,7 +670,15 @@ function funnelN3(round: Round = "NSAT-3", src?: Src): FunnelResult {
     : useN4
     ? c(`SELECT COUNT(DISTINCT lead_id) n FROM nsat4_slots WHERE lead_id IN (SELECT lead_id FROM nsat4_map)`)
     : c(`SELECT COUNT(*) n FROM counselling_sessions x ${jl(" AND x.scheduled_at IS NOT NULL")}`); // slots booked (day tabs)
-  const held = useN4 || useCsatTest
+  // CSAT-1 attendance comes from the panelist form (csat_outcome). Before that
+  // feed existed there was no attendance anywhere, hence the 0 fallback.
+  const csatHeld = useCsatTest
+    ? c(`SELECT COUNT(*) n FROM csat_outcome o JOIN csat_map m ON m.lead_id = o.lead_id
+          WHERE m.round_tag IN (${inc}) AND o.status LIKE 'Happening%'`)
+    : 0;
+  const held = useCsatTest
+    ? csatHeld
+    : useN4
     ? 0
     : c(`SELECT COUNT(DISTINCT x.lead_id) n FROM counselling_sessions x ${jl(" AND x.status='held'")}`); // counselling actually done
   // NSAT-flow offers only: CRM also holds direct-admission offers (never tested)
@@ -845,8 +853,8 @@ function funnelN3(round: Round = "NSAT-3", src?: Src): FunnelResult {
       // Slot days come and go, so do not claim "not held yet" once the date has
       // passed — the honest statement is that attendance is never recorded.
       ? (String(firstSlot) >= new Date().toISOString().slice(0, 10)
-          ? `first session ${firstSlot} · attendance is not recorded`
-          : `slots ran from ${firstSlot} · attendance is not recorded`)
+          ? `first session ${firstSlot}${useCsatTest ? "" : " · attendance is not recorded"}`
+          : `slots ran from ${firstSlot}${useCsatTest ? " · awaiting panelist responses" : " · attendance is not recorded"}`)
       : "counselling not started yet"
   );
   main("offer_letter", "Offer Letter", offers, "no offer feed yet");

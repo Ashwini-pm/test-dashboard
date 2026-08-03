@@ -29,6 +29,7 @@ export const PULLED: Record<string, string> = {
   nsat5_lead_map: "NSAT-5 lead map",
   nsat4_counselling: "NSAT-4 counselling slots",
   csat_counselling: "CSAT-1 counselling slots",
+  csat_counselling_outcomes: "CSAT-1 panelist outcomes (counselling attendance)",
   ai_calls: "AI calling (narrowed to cohort leads)",
 };
 
@@ -135,7 +136,7 @@ export async function auditTables(): Promise<TableStatus[]> {
 export function auditMemory(): { table: string; rows: number; ok: boolean }[] {
   const want = [
     "leads", "registrations", "csat_map", "nsat3_map", "nsat4_map", "csat_tag",
-    "ai_reach", "nsat4_slots", "csat_slots", "cohort_csat1", "cohort_nsat3",
+    "ai_reach", "nsat4_slots", "csat_slots", "csat_outcome", "cohort_csat1", "cohort_nsat3",
     "cohort_nsat4", "cohort_nsat5", "stage_flags",
   ];
   return want.map((t) => {

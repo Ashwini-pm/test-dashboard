@@ -448,7 +448,7 @@ async function fetchCsatProject(): Promise<CsatPull | null> {
   return Promise.all([
     // nsat4_counselling is pulled for its slot fields only. nsat4_lead_map stays
     // the NSAT-4 lead universe and the authority on offer letter / seat booked.
-    ...["nsat4", "bba", "bca", "combined", "nsat3_lead_map", "lead_map", "nsat4_lead_map", "nsat5_lead_map", "nsat4_counselling", "csat_counselling"].map(async (t) => ({ table: t, rows: await pull(t) })),
+    ...["nsat4", "bba", "bca", "combined", "nsat3_lead_map", "lead_map", "nsat4_lead_map", "nsat5_lead_map", "nsat4_counselling", "csat_counselling", "csat_counselling_outcomes"].map(async (t) => ({ table: t, rows: await pull(t) })),
     // AI calls, narrowed to rows already resolved to a cohort lead. The lead ids
     // are stored on the row, so we never join on phone.
     (async () => ({
@@ -497,6 +497,13 @@ function overlayNsat4Csat(pulls: CsatPull): void {
   const insAi = db.prepare("INSERT INTO ai_reach(lead_id,cohort,reached,called,last_call) VALUES (?,?,?,?,?)");
   // CSAT-1 counselling slots, same shape as NSAT-4: a booking_id means a slot is
   // booked, and there is no attendance column, so "counselling done" is unknowable.
+  // Panelist outcomes, synced from the responses sheet every 15 min. The ONLY
+  // source of counselling attendance: csat_counselling has the booking, this has
+  // what happened. One row per submission, so a student can appear twice
+  // (rescheduled, then held) — collapse to the latest per lead.
+  db.exec("DROP TABLE IF EXISTS csat_outcome");
+  db.exec("CREATE TABLE csat_outcome (lead_id TEXT PRIMARY KEY, status TEXT, submitted_at TEXT, panelist TEXT, likelihood INTEGER, motivation INTEGER, comms INTEGER, scholarship INTEGER, remarks TEXT, reschedule_reason TEXT)");
+  const insOut = db.prepare("INSERT INTO csat_outcome(lead_id,status,submitted_at,panelist,likelihood,motivation,comms,scholarship,remarks,reschedule_reason) VALUES (?,?,?,?,?,?,?,?,?,?) ON CONFLICT(lead_id) DO UPDATE SET status=excluded.status, submitted_at=excluded.submitted_at, panelist=excluded.panelist, likelihood=excluded.likelihood, motivation=excluded.motivation, comms=excluded.comms, scholarship=excluded.scholarship, remarks=excluded.remarks, reschedule_reason=excluded.reschedule_reason WHERE excluded.submitted_at > csat_outcome.submitted_at");
   db.exec("DROP TABLE IF EXISTS csat_slots");
   db.exec("CREATE TABLE csat_slots (lead_id TEXT, booking_id TEXT, call_date TEXT, call_time TEXT, panelist TEXT, program TEXT)");
   const insCSlot = db.prepare("INSERT INTO csat_slots(lead_id,booking_id,call_date,call_time,panelist,program) VALUES (?,?,?,?,?,?)");
@@ -545,6 +552,16 @@ function overlayNsat4Csat(pulls: CsatPull): void {
         for (const [k, v] of acc) {
           const [coh, lid] = k.split("\u0000");
           insAi.run(lid, coh, v.reached ? 1 : 0, 1, v.last || null);
+        }
+        continue;
+      }
+      if (table === "csat_counselling_outcomes") {
+        for (const r of rows) {
+          const lid = String(r.lead_id ?? "").trim();
+          if (!lid) continue;
+          insOut.run(lid, r.status ?? null, String(r.submitted_at ?? ""), r.panelist_email ?? null,
+                     r.likelihood_seat ?? null, r.motivation ?? null, r.communication_skills ?? null,
+                     r.scholarship_reco ?? null, r.remarks ?? null, r.reschedule_reason ?? null);
         }
         continue;
       }
