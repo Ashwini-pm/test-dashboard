@@ -702,7 +702,7 @@ export function drill(ctx: Ctx, round: string | null | undefined, p: DrillParams
     if (p.pstage === "slot") { w.push("m.lead_id IN (SELECT lead_id FROM nsat4_slots)"); bits.push("counselling slot booked"); }
     if (p.pstage === "ol")   { w.push("nullif(m.offer_letter,'') IS NOT NULL"); bits.push("offer letter"); }
     if (p.pstage === "seat") { w.push("m.seat_booked = 'Yes'"); bits.push("seat booked"); }
-  } else if (p.pstage) {
+  } else if (p.pstage && m.table !== "csat_map") {
     const inc2 = inClause(ctx, round);
     const S: Record<string, [string, string]> = {
       test:  ["tested=1", "test given"],
