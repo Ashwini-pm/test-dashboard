@@ -573,6 +573,7 @@ export interface DrillParams {
   ac?: string | null;      // AI calling:    dialled | conn | noconn | never
   pt?: string | null;      // contact by test day, person: touched | conn | noconn | never | nodata
   pta?: string | null;     // contact by test day, AI:     touched | conn | noconn | never
+  cb?: string | null;      // combined by test day: any | both | hu | ai | noconn | never | nodata
   fstage?: string | null;  // funnel stage, panelist-gated: lead|reg|test|slot|couns|ol|sb
   prog?: string | null;    // CSAT programme bucket: BBA|BCA|BTECH|OTHER
 }
@@ -724,6 +725,32 @@ export function drill(ctx: Ctx, round: string | null | undefined, p: DrillParams
   }
   // Contact up to and including the test day. Post-test contact cannot explain
   // whether someone sat the test, so it is excluded here on purpose.
+  // Combined human + AI. Buckets are mutually exclusive, so a student dialled by
+  // both lands in one list only, matching the table above it.
+  if (p.cb && (m.table === "csat_map" || m.table === "nsat4_map")) {
+    const isC = m.table === "csat_map";
+    const CUT = isC ? "2026-07-31" : "2026-07-30";
+    const AICOH = isC ? "CSAT-1" : "NSAT-4";
+    const ai = (col: string) =>
+      `EXISTS (SELECT 1 FROM ai_reach a WHERE a.cohort='${AICOH}' AND a.lead_id=m.lead_id` +
+      ` AND a.${col} IS NOT NULL AND a.${col} < '${CUT}')`;
+    const hT = `(m.first_call_at IS NOT NULL AND m.first_call_at < '${CUT}')`;
+    const hCraw = isC
+      ? `(m.first_conn_at IS NOT NULL AND m.first_conn_at < '${CUT}')`
+      : "(coalesce(m.connected_calls,0) > 0)";
+    const hC = `(${hT} AND ${hCraw})`;
+    const aT = `(${ai("first_call")})`;
+    const aC = `(${ai("first_call")} AND ${ai("first_conn")})`;
+    const anyT = `(${hT} OR ${aT})`;
+    const anyC = `(${hC} OR ${aC})`;
+    if (p.cb === "any")    { w.push(anyC); bits.push("reached by someone before the test"); }
+    if (p.cb === "both")   { w.push(`${hC} AND ${aC}`); bits.push("reached by both a person and AI"); }
+    if (p.cb === "hu")     { w.push(`${hC} AND NOT ${aC}`); bits.push("reached by a person only"); }
+    if (p.cb === "ai")     { w.push(`${aC} AND NOT ${hC}`); bits.push("reached by AI only"); }
+    if (p.cb === "noconn") { w.push(`${anyT} AND NOT ${anyC}`); bits.push("dialled, nobody got through"); }
+    if (p.cb === "never")  { w.push(`NOT ${anyT} AND m.total_calls IS NOT NULL`); bits.push("never dialled by either"); }
+    if (p.cb === "nodata") { w.push(`NOT ${anyT} AND m.total_calls IS NULL`); bits.push("no calling record"); }
+  }
   if ((p.pt || p.pta) && (m.table === "csat_map" || m.table === "nsat4_map")) {
     const isC = m.table === "csat_map";
     // CSAT-1 tested on 30 Jul, NSAT-4 on 28 and 29 Jul.

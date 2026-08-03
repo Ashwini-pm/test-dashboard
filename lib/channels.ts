@@ -593,7 +593,7 @@ export interface ContactRow {
   cells: StageCell[];
 }
 export interface ContactFunnel {
-  key: "human" | "ai";
+  key: "human" | "ai" | "both";
   label: string;
   note: string;
   rows: ContactRow[];
@@ -645,7 +645,8 @@ function stagesFor(c: Cohort): { key: string; label: string; cond: string; drill
 }
 
 /** Contact buckets for one channel. Connected is always a subset of Touched. */
-function buckets(c: Cohort, channel: "human" | "ai") {
+function buckets(c: Cohort, channel: "human" | "ai" | "both") {
+  if (channel === "both") return combinedBuckets(c);
   const p = channel === "human" ? "pt" : "pta";
   const ai = (col: string) =>
     `EXISTS (SELECT 1 FROM ai_reach a WHERE a.cohort='${c.aiCohort}' AND a.lead_id=m.lead_id` +
@@ -674,6 +675,47 @@ function buckets(c: Cohort, channel: "human" | "ai") {
   return rows;
 }
 
+
+// Human and AI as one picture. These buckets are MUTUALLY EXCLUSIVE, which is the
+// whole point: a student dialled by a person and by AI appears once, under "By
+// both", so the column adds back to the total instead of double counting. That is
+// why the two channel tables above can never simply be summed.
+//
+// "Reached" means at least one channel had a real conversation. Its three children
+// split it by who got through, and they add back to it.
+function channelPreds(c: Cohort) {
+  const ai = (col: string) =>
+    `EXISTS (SELECT 1 FROM ai_reach a WHERE a.cohort='${c.aiCohort}' AND a.lead_id=m.lead_id` +
+    ` AND a.${col} IS NOT NULL AND a.${col} < '${c.cut}')`;
+  const hTouch = `(m.first_call_at IS NOT NULL AND m.first_call_at < '${c.cut}')`;
+  const hConnRaw = c.humanConnExact
+    ? `(m.first_conn_at IS NOT NULL AND m.first_conn_at < '${c.cut}')`
+    : "(coalesce(m.connected_calls,0) > 0)";
+  return {
+    hTouch,
+    aTouch: `(${ai("first_call")})`,
+    // effective connected: only counts if we also dialled them in the window, so
+    // Connected can never escape Touched and the arithmetic holds
+    hConn: `(${hTouch} AND ${hConnRaw})`,
+    aConn: `(${ai("first_call")} AND ${ai("first_conn")})`,
+  };
+}
+
+function combinedBuckets(c: Cohort) {
+  const P = channelPreds(c);
+  const anyTouch = `(${P.hTouch} OR ${P.aTouch})`;
+  const anyConn = `(${P.hConn} OR ${P.aConn})`;
+  return [
+    { key: "reached",  label: "Reached by someone", cond: anyConn, strong: true, drill: "cb=any" },
+    { key: "both",     label: "By both", cond: `(${P.hConn} AND ${P.aConn})`, indent: true, drill: "cb=both" },
+    { key: "huonly",   label: "By a person only", cond: `(${P.hConn} AND NOT ${P.aConn})`, indent: true, drill: "cb=hu" },
+    { key: "aionly",   label: "By AI only", cond: `(${P.aConn} AND NOT ${P.hConn})`, indent: true, drill: "cb=ai" },
+    { key: "noconn",   label: "Dialled, nobody got through", cond: `${anyTouch} AND NOT ${anyConn}`, strong: true, drill: "cb=noconn" },
+    { key: "never",    label: "Never dialled by either", cond: `NOT ${anyTouch} AND m.total_calls IS NOT NULL`, strong: true, drill: "cb=never" },
+    { key: "norec",    label: "No calling record", cond: `NOT ${anyTouch} AND m.total_calls IS NULL`, strong: false, drill: "cb=nodata" },
+  ];
+}
+
 export function contactFunnel(cohortKey: string, where = "", prog?: string | null): ContactFunnel[] | null {
   const c = COHORTS[cohortKey];
   if (!c || !tableReady(c.table)) return null;
@@ -685,7 +727,7 @@ export function contactFunnel(cohortKey: string, where = "", prog?: string | nul
     } catch { return 0; }
   };
 
-  const build = (channel: "human" | "ai", label: string, note: string): ContactFunnel => {
+  const build = (channel: "human" | "ai" | "both", label: string, note: string): ContactFunnel => {
     const bs = buckets(c, channel);
     const all: ContactRow = {
       key: "total", label: "Total", strong: true,
@@ -711,6 +753,8 @@ export function contactFunnel(cohortKey: string, where = "", prog?: string | nul
 
   const approx = c.humanConnExact ? "" : " · Connected is not windowed here, see the note below";
   const out = [
+    build("both", "Human and AI combined",
+      "one row per student, counted once, so the buckets add back to the total"),
     build("human", "Human calling (CRM)", `contact up to the test day, from the CRM call log${approx}`),
     build("ai", "AI calling (Alchemyst)", "contact up to the test day, from per-call Alchemyst records"),
   ];
