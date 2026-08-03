@@ -581,6 +581,7 @@ export interface DrillParams {
   nocouns?: string | null; // "1"
   origin?: string[] | null; // both | capture_only | crm_only — multi-select
   camp?: string[] | null;   // utm_campaign — multi-select
+  med?: string[] | null;    // utm_medium bucket — multi-select
   q?: string | null;       // free text: name / lead id / phone
   id?: string | null;      // lead id contains
   name?: string | null;    // name contains
@@ -605,9 +606,9 @@ export interface DrillParams {
 
 // Distinct values for the filter dropdowns on the drill page.
 export function drillFacets(ctx: Ctx, round?: string | null):
-  { sources: string[]; campaigns: string[]; origins: string[]; counsellors: string[] } {
+  { sources: string[]; mediums: string[]; campaigns: string[]; origins: string[]; counsellors: string[] } {
   const m = mapTableFor(ctx, round);
-  if (!m) return { sources: [], campaigns: [], origins: [], counsellors: [] };
+  if (!m) return { sources: [], mediums: [], campaigns: [], origins: [], counsellors: [] };
   const col = (c: string, alias: string) => {
     try {
       return (db.prepare(
@@ -617,13 +618,14 @@ export function drillFacets(ctx: Ctx, round?: string | null):
   };
   return {
     sources: col("crm_source_category", "v"),
+    mediums: m.table === "csat_map" ? col("utm_medium", "v") : [],
     campaigns: col("utm_campaign", "v"),
     origins: col("origin", "v"),
     counsellors: col("counsellor", "v"),
   };
 }
 export interface DrillRow {
-  lead_id: string; name: string; phone: string; source: string; campaign: string;
+  lead_id: string; name: string; phone: string; source: string; medium: string; campaign: string;
   registered: string; calls: number; connected: number; first_signup: string | null;
   first_call_at: string | null; counsellor: string;
 }
@@ -645,6 +647,10 @@ export function drill(ctx: Ctx, round: string | null | undefined, p: DrillParams
       v === NO_SRC ? "nullif(m.crm_source_category,'') IS NULL" : `m.crm_source_category = '${esc(v)}'`);
     w.push(`(${parts.join(" OR ")})`);
     bits.push(p.src.join(" / "));
+  }
+  if (p.med?.length && m.table === "csat_map") {
+    w.push(`(${p.med.map((v) => `m.utm_medium = '${esc(v)}'`).join(" OR ")})`);
+    bits.push(p.med.join(" / "));
   }
   if (p.stage === "reg") { w.push(`m.${paid}='paid'`); bits.push("registered"); }
   else if (p.stage === "lead") bits.push("all leads");
@@ -896,9 +902,11 @@ export function drill(ctx: Ctx, round: string | null | undefined, p: DrillParams
     bits.push(p.couns.map((v) => (v === "__none__" ? "no counsellor" : v)).join(" / "));
   }
 
+  const hasMedium = m.table === "csat_map";
   const sql =
     `SELECT m.lead_id, coalesce(m.name,'') name, coalesce(m.phone,'') phone,
             coalesce(nullif(m.crm_source_category,''),'${NO_SRC}') source,
+            ${hasMedium ? "coalesce(nullif(m.utm_medium,''),'—')" : "''"} medium,
             coalesce(m.utm_campaign,'') campaign,
             coalesce(m.${paid},'') registered,
             coalesce(m.total_calls,0) calls, coalesce(m.connected_calls,0) connected,

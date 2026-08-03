@@ -33,7 +33,7 @@ export default async function Drill({ searchParams }: { searchParams: Promise<Re
   const ctx = parseCtx(one(sp.ctx));
   const round = one(sp.round) || defaultRound(ctx);
   const p: DrillParams = {
-    src: many(sp.src), camp: many(sp.camp), origin: many(sp.origin), couns: many(sp.couns),
+    src: many(sp.src), camp: many(sp.camp), med: many(sp.med), origin: many(sp.origin), couns: many(sp.couns),
     stage: one(sp.stage), act: one(sp.act), reg: one(sp.reg), age: one(sp.age), speed: one(sp.speed),
     conn: one(sp.conn), nocouns: one(sp.nocouns), q: one(sp.q), pstage: one(sp.pstage), cprog: one(sp.cprog), sprog: one(sp.sprog),
     id: one(sp.id), name: one(sp.name), phone: one(sp.phone), tg: one(sp.tg), tag: one(sp.tag), reach: one(sp.reach), ch: one(sp.ch), hc: one(sp.hc), ac: one(sp.ac),
@@ -60,7 +60,7 @@ export default async function Drill({ searchParams }: { searchParams: Promise<Re
     ];
     for (const [k, v] of single) if (v) q.set(k, v);
     const multi: [string, string[] | null | undefined][] = [
-      ["src", p.src], ["camp", p.camp], ["origin", p.origin], ["couns", p.couns],
+      ["src", p.src], ["camp", p.camp], ["med", p.med], ["origin", p.origin], ["couns", p.couns],
     ];
     for (const [k, arr] of multi) for (const v of arr ?? []) q.append(k, v);
     return q.toString();
@@ -145,6 +145,7 @@ export default async function Drill({ searchParams }: { searchParams: Promise<Re
                     <th>Name</th>
                     <th>Phone</th>
                     <th>Source</th>
+                    <th>Medium</th>
                     <th>Campaign</th>
                     <th>Registered</th>
                     <th className="tnum">Calls</th>
@@ -159,6 +160,7 @@ export default async function Drill({ searchParams }: { searchParams: Promise<Re
                     <th>{text("name", p.name, "name")}</th>
                     <th>{text("phone", p.phone, "phone")}</th>
                     <th>{multi("src", f.sources, p.src, ["No CRM source", "No CRM source"])}</th>
+                    <th>{f.mediums.length ? multi("med", f.mediums, p.med) : null}</th>
                     <th>{multi("camp", f.campaigns, p.camp)}</th>
                     <th>{single("reg", REGS, p.reg)}</th>
                     <th>{single("act", CALLS, p.act)}</th>
@@ -176,6 +178,7 @@ export default async function Drill({ searchParams }: { searchParams: Promise<Re
                       <td>{r.name || "—"}</td>
                       <td className={r.phone && !/^\d/.test(r.phone) ? "df-enc" : ""}>{r.phone || "—"}</td>
                       <td>{r.source}</td>
+                      <td>{r.medium || "—"}</td>
                       <td>{r.campaign || "—"}</td>
                       <td className={r.registered === "paid" ? "cv-reg" : "cv-unreg"}>{r.registered || "—"}</td>
                       <td className="tnum">{r.calls}</td>
@@ -186,7 +189,7 @@ export default async function Drill({ searchParams }: { searchParams: Promise<Re
                     </tr>
                   ))}
                   {!rows.length && (
-                    <tr><td colSpan={12} className="cap">no students match this slice</td></tr>
+                    <tr><td colSpan={13} className="cap">no students match this slice</td></tr>
                   )}
                 </tbody>
               </table>
