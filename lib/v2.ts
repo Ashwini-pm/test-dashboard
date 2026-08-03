@@ -1263,8 +1263,12 @@ export function sankeyTree(ctx: Ctx, round?: string | null): SNode {
   const slotAny = union(slot, held);
   const sSlot = inter(sPass, slotAny);
   const sHeld = inter(sSlot.size ? new Set([...sPass]) : sPass, held); // held may include slot-less form outcomes
-  const sOl = isN4 ? inter(all, olAll) : inter(sHeld.size ? inter(sPass, cohort) : cohort, olAll);
-  const sSeat = isN4 ? inter(all, seatAll) : inter(sOl.size ? sOl : cohort, seatAll);
+  // NSAT-4 nests properly now that attendance exists: verified against the tables,
+  // its offers sit inside Counselled and its seats inside the offers, with zero
+  // exceptions. Previously offers hung off the whole lead set because there was no
+  // Counselled node to hang them from.
+  const sOl = isN4 ? inter(sHeld, olAll) : inter(sHeld.size ? inter(sPass, cohort) : cohort, olAll);
+  const sSeat = isN4 ? inter(sOl, seatAll) : inter(sOl.size ? sOl : cohort, seatAll);
 
   const node = (id: string, label: string, n: number, tone: SNode["tone"], children?: SNode[], drill?: string): SNode =>
     ({ id, label, n, tone, ...(drill ? { drill } : {}), ...(children && children.length ? { children } : {}) });
@@ -1283,20 +1287,16 @@ export function sankeyTree(ctx: Ctx, round?: string | null): SNode {
     node("ol_expired", "Offer expired", bExpired.size, "bad", comms(bExpired, "ol_expired")),
     node("held_no_ol", "No offer yet", sHeld.size - sOl.size, "bad", comms(diff(sHeld, olAll), "held_no_ol")),
   ]);
-  // A Sankey box must contain its children exactly. For NSAT-4 that rules out
-  // hanging Counselled / Offer / Seat off the pass chain: attendance is never
-  // recorded, and the offers and seats there did not pass the test or book a
-  // slot. So NSAT-4's flow terminates at Slot booked, split by calling reach;
-  // the funnel above the diagram carries its offer and seat counts.
-  const slotNode = isN4
-    ? node("slot", "Slot booked", sSlot.size, "good", comms(sSlot, "slot"))
-    : node("slot", "Slot booked", sSlot.size, "good", [
-        heldNode,
-        // count the actual set (slot booked, not held), not sSlot - sHeld: sHeld is
-        // derived from sPass and can include leads with no slot, which made the box
-        // read 80 while its own children summed to 88.
-        node("slot_no_held", "Counselling pending", diff(sSlot, held).size, "warn", comms(diff(sSlot, held), "slot_no_held")),
-      ]);
+  // A Sankey box must contain its children exactly. Every round now records
+  // attendance, so all of them nest the same way and NSAT-4 no longer dead-ends at
+  // Slot booked with its offers and seats missing from the diagram.
+  const slotNode = node("slot", "Slot booked", sSlot.size, "good", [
+    heldNode,
+    // count the actual set (slot booked, not held), not sSlot - sHeld: sHeld is
+    // derived from sPass and can include leads with no slot, which made the box
+    // read 80 while its own children summed to 88.
+    node("slot_no_held", "Counselling pending", diff(sSlot, held).size, "warn", comms(diff(sSlot, held), "slot_no_held")),
+  ]);
   const passNode = node("pass", "Passed", sPass.size, "good", [
     slotNode,
     node("pass_no_slot", "No slot booked", diff(sPass, slotAny).size, "bad", comms(diff(sPass, slotAny), "pass_no_slot")),

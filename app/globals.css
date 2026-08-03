@@ -1606,3 +1606,5 @@ table.list tbody tr:hover td {
   border: 1px solid var(--line, #e5e7eb); background: var(--card, #fff); color: inherit;
 }
 .progsel.busy { opacity: .55; }
+/* Ties the combined table to the per-channel tables below it. */
+.cf-recon { margin: 8px 0 18px; font-size: 12.5px; line-height: 1.55; color: var(--muted, #6b7280); }

@@ -597,6 +597,8 @@ export interface ContactFunnel {
   label: string;
   note: string;
   rows: ContactRow[];
+  /** spelled-out arithmetic tying this table to the per-channel tables */
+  recon?: string;
 }
 
 // One cohort's shape. Everything that differs between CSAT-1 and NSAT-4 lives
@@ -751,10 +753,20 @@ export function contactFunnel(cohortKey: string, where = "", prog?: string | nul
     return { key: channel, label, note, rows: [all, ...rows] };
   };
 
+  // Spell out how the combined table relates to the two channel tables. Read on
+  // its own, "By AI only 2,179" looks like it contradicts "AI Connected 3,466".
+  // It does not: the gap is the students a person also got through to.
+  const P = channelPreds(c);
+  const nf = (n: number) => n.toLocaleString("en-IN");
+  const hTot = count(P.hConn), aTot = count(P.aConn), bothN = count(`${P.hConn} AND ${P.aConn}`);
+  const recon =
+    `AI connected ${nf(aTot)} = ${nf(bothN)} by both + ${nf(aTot - bothN)} by AI only. ` +
+    `A person connected ${nf(hTot)} = ${nf(bothN)} by both + ${nf(hTot - bothN)} by a person only. ` +
+    `The two overlap on ${nf(bothN)} students, which is why the channel tables cannot be added.`;
   const approx = c.humanConnExact ? "" : " · Connected is not windowed here, see the note below";
   const out = [
-    build("both", "Human and AI combined",
-      "one row per student, counted once, so the buckets add back to the total"),
+    { ...build("both", "Human and AI combined",
+        "one row per student, counted once, so the buckets add back to the total"), recon },
     build("human", "Human calling (CRM)", `contact up to the test day, from the CRM call log${approx}`),
     build("ai", "AI calling (Alchemyst)", "contact up to the test day, from per-call Alchemyst records"),
   ];

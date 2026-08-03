@@ -48,6 +48,7 @@ function Table({ f, qs, labels }: { f: CF; qs: string; labels: string[] }) {
           </tbody>
         </table>
       </div>
+      {f.recon && <p className="cf-recon">{f.recon}</p>}
     </>
   );
 }

@@ -154,7 +154,7 @@ export default async function Overview({ searchParams }: { searchParams: Promise
             <header>
               <h3>Post test</h3>
               <span className="cap">
-                {postTest.length ? `after the exam · ${postTest.map((r) => r.label.toLowerCase()).join(" · ")}` : "after the exam"}
+                after the exam · calling coverage at each stage · every cell opens its list
               </span>
             </header>
             <FunnelCallTable rows={postTest} qs={dqp} emptyNote="No post-test data yet." />
