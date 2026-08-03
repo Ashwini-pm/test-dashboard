@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useState } from "react";
 import type { SourceAction } from "@/lib/v2";
+import { NO_SRC } from "@/lib/v2";
 
 // Source x calling coverage. The CRM's taxonomy has a long tail: for CSAT-1,
 // twelve categories hold 38 leads between them, mostly pre-campaign leads
@@ -18,6 +19,8 @@ const pct = (a: number, b: number) => (b > 0 ? Math.round((a / b) * 100) : 0);
 
 /** A source with fewer leads than this folds into Small quantum. */
 const SMALL_MAX = 10;
+/** Always folded in regardless of size, by request. */
+const isSmall = (r: SourceAction) => r.leads < SMALL_MAX || r.src === NO_SRC;
 
 function Row({ r, qs, indent }: { r: SourceAction; qs: string; indent?: boolean }) {
   const cp = pct(r.called, r.leads);
@@ -45,8 +48,8 @@ function Row({ r, qs, indent }: { r: SourceAction; qs: string; indent?: boolean 
 export default function SourceActionTable({ rows, qs }: { rows: SourceAction[]; qs: string }) {
   const [open, setOpen] = useState(false);
 
-  const big = rows.filter((r) => r.leads >= SMALL_MAX);
-  const small = rows.filter((r) => r.leads < SMALL_MAX);
+  const big = rows.filter((r) => !isSmall(r));
+  const small = rows.filter(isSmall);
   const sum = (rs: SourceAction[]) =>
     rs.reduce((a, r) => ({ leads: a.leads + r.leads, called: a.called + r.called, connected: a.connected + r.connected }),
       { leads: 0, called: 0, connected: 0 });
