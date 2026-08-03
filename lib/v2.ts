@@ -185,7 +185,7 @@ export function sourceStages(ctx: Ctx, round?: string | null): SourceStage[] {
     ...(m.table === "csat_map"
       ? ([
           ["slotb", "Slot booked", fromMap(" AND m.lead_id IN (SELECT lead_id FROM csat_slots)")],
-          ["ol", "Offer letter", fromMap(" AND nullif(m.offer_letter,'') IS NOT NULL")],
+          ["ol", "Offer letter (all)", fromMap(" AND nullif(m.offer_letter,'') IS NOT NULL")],
           // lead level: every seat, counselled or not
           ["seat", "Seat booked (all)", fromMap(" AND m.seat_booked = 'Yes'")],
         ] as [string, string, string][])
@@ -375,6 +375,9 @@ export function preTestTree(ctx: Ctx, round?: string | null): CallNode[] {
 export interface FunnelCallRow {
   key: string; label: string; total: number; called: number;
   picked: number; notPicked: number; notCalled: number;
+  /** total_calls IS NULL: no calling record for this lead, so we cannot say. NOT
+   *  the same as not touched, and never merged into it. */
+  noData: number;
   drill?: string; // base filter for this row; columns append their own
 }
 function callCols(m: { table: string; where: string }, scope: string) {
@@ -383,7 +386,19 @@ function callCols(m: { table: string; where: string }, scope: string) {
   const total = c("");
   const called = c(" AND coalesce(m.total_calls,0)>0");
   const picked = c(" AND coalesce(m.connected_calls,0)>0");
-  return { total, called, picked, notPicked: called - picked, notCalled: c(" AND coalesce(m.total_calls,0)=0") };
+  // notCalled must exclude NULLs: a lead with no calling record was not "not
+  // touched", we simply do not know. Split so the two never merge.
+  const hasCol = (() => {
+    try { return (db.prepare(`PRAGMA table_info(${m.table})`).all() as { name: string }[]).some((x) => x.name === "total_calls"); }
+    catch { return false; }
+  })();
+  const noData = hasCol ? c(" AND m.total_calls IS NULL") : 0;
+  return {
+    total, called, picked,
+    notPicked: called - picked,
+    notCalled: c(" AND m.total_calls IS NOT NULL AND m.total_calls = 0"),
+    noData,
+  };
 }
 export function preTestTable(ctx: Ctx, round?: string | null): FunnelCallRow[] {
   const m = mapTableFor(ctx, round);
@@ -438,7 +453,8 @@ export function postTestTable(ctx: Ctx, round?: string | null): FunnelCallRow[] 
     const defs: [string, string, string][] = [
       ["slot", "Slot booked", " AND m.lead_id IN (SELECT lead_id FROM csat_slots)"],
       ["couns", "Counselling done", " AND m.lead_id IN (SELECT lead_id FROM csat_outcome WHERE status LIKE 'Happening%')"],
-      ["ol", "Offer letter", " AND nullif(m.offer_letter,'') IS NOT NULL"],
+      ["ol", "Offer letter · counselled", " AND nullif(m.offer_letter,'') IS NOT NULL AND m.lead_id IN (SELECT lead_id FROM csat_outcome)"],
+      ["ol_nc", "Offer letter · no panelist response", " AND nullif(m.offer_letter,'') IS NOT NULL AND m.lead_id NOT IN (SELECT lead_id FROM csat_outcome)"],
       // Verified = a panelist recorded this student. The rest are real seats but
       // direct admissions that never went through counselling, so they are counted
       // separately at lead level rather than credited to the counselling funnel.
@@ -690,7 +706,9 @@ export function drill(ctx: Ctx, round: string | null | undefined, p: DrillParams
   if (p.pstage && m.table === "csat_map") {
     if (p.pstage === "slot")  { w.push("m.lead_id IN (SELECT lead_id FROM csat_slots)"); bits.push("counselling slot booked"); }
     if (p.pstage === "couns") { w.push("m.lead_id IN (SELECT lead_id FROM csat_outcome WHERE status LIKE 'Happening%')"); bits.push("counselling done"); }
-    if (p.pstage === "ol")    { w.push("nullif(m.offer_letter,'') IS NOT NULL"); bits.push("offer letter"); }
+    if (p.pstage === "ol")      { w.push("nullif(m.offer_letter,'') IS NOT NULL AND m.lead_id IN (SELECT lead_id FROM csat_outcome)"); bits.push("offer letter, counselled"); }
+    if (p.pstage === "ol_nc")   { w.push("nullif(m.offer_letter,'') IS NOT NULL AND m.lead_id NOT IN (SELECT lead_id FROM csat_outcome)"); bits.push("offer letter, no panelist response"); }
+    if (p.pstage === "ol_all")  { w.push("nullif(m.offer_letter,'') IS NOT NULL"); bits.push("offer letter, any"); }
     if (p.pstage === "seat")     { w.push("m.seat_booked = 'Yes' AND m.lead_id IN (SELECT lead_id FROM csat_outcome)"); bits.push("seat booked, counselled"); }
     if (p.pstage === "seat_nc")  { w.push("m.seat_booked = 'Yes' AND m.lead_id NOT IN (SELECT lead_id FROM csat_outcome)"); bits.push("seat booked, no panelist response"); }
     if (p.pstage === "seat_all") { w.push("m.seat_booked = 'Yes'"); bits.push("seat booked, any"); }

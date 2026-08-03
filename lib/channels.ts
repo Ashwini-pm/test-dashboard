@@ -533,3 +533,123 @@ export function csatCalling(where = ""): CsatCalling | null {
     aiLastCall: last?.d ?? null,
   };
 }
+
+// ---------------------------------------------------------------------------
+// CSAT-1 post-test: communication by channel, then did they turn up.
+//
+// Population: the 280 students who GAVE THE TEST. Post-test means after the exam,
+// so the denominator is the people who actually sat it.
+//
+// Per channel, the tree the stakeholders asked for:
+//
+//   Touched                        a human dialled / AI dialled
+//    |- Connected                  the call connected
+//    |   |- turned up / did not turn up / rescheduled / not known
+//    \- Not connected
+//        \- turned up / ...
+//   Not touched
+//    \- turned up / ...
+//
+// Turn-up comes from the panelist form and nowhere else. FOUR states, not two:
+// "to be rescheduled" is not a no-show, and "no response yet" (91 of 138 slot
+// bookers) is not a no-show either. Merging either into "did not turn up" would
+// invent no-shows that nobody recorded.
+//
+// Human touch counts are CUMULATIVE, not post-test-only: lead_map carries
+// total_calls / connected_calls with no date breakdown, so a call made before the
+// exam counts as a touch here. Stated on the page rather than silently implied.
+// ---------------------------------------------------------------------------
+
+export interface TurnUp { turnedUp: number; noShow: number; rescheduled: number; unknown: number }
+export interface PostRow {
+  key: string;
+  label: string;
+  indent?: boolean;
+  students: number;
+  turn: TurnUp;
+  /** drill filter for this row */
+  drill: string;
+}
+export interface PostChannel { key: "human" | "ai"; label: string; rows: PostRow[]; total: number }
+
+const TURN = {
+  turnedUp: "o.status LIKE 'Happening%'",
+  noShow: "o.status LIKE 'Not Happening%'",
+  rescheduled: "o.status LIKE 'To be%'",
+};
+
+function turnUpFor(where: string): TurnUp {
+  const c = (cond: string) =>
+    int(db.prepare(
+      `SELECT COUNT(*) n FROM csat_map m
+        WHERE m.test_given='Test_Given'${where}
+          AND EXISTS (SELECT 1 FROM csat_outcome o WHERE o.lead_id = m.lead_id AND ${cond})`
+    ).get());
+  const total = int(db.prepare(
+    `SELECT COUNT(*) n FROM csat_map m WHERE m.test_given='Test_Given'${where}`
+  ).get());
+  const turnedUp = c(TURN.turnedUp);
+  const noShow = c(TURN.noShow);
+  const rescheduled = c(TURN.rescheduled);
+  return { turnedUp, noShow, rescheduled, unknown: total - turnedUp - noShow - rescheduled };
+}
+
+export function csatPostTestChannels(where = ""): { channels: PostChannel[]; population: number } | null {
+  if (!tableReady("csat_map")) return null;
+  const population = int(db.prepare(
+    `SELECT COUNT(*) n FROM csat_map m WHERE m.test_given='Test_Given'${where}`
+  ).get());
+  if (population === 0) return null;
+
+  const H = {
+    touched: " AND coalesce(m.total_calls,0) > 0",
+    notTouched: " AND coalesce(m.total_calls,0) = 0",
+    conn: " AND coalesce(m.total_calls,0) > 0 AND coalesce(m.connected_calls,0) > 0",
+    notConn: " AND coalesce(m.total_calls,0) > 0 AND coalesce(m.connected_calls,0) = 0",
+  };
+  const AI_D = "m.lead_id IN (SELECT lead_id FROM ai_reach WHERE cohort='CSAT-1')";
+  const AI_C = "m.lead_id IN (SELECT lead_id FROM ai_reach WHERE cohort='CSAT-1' AND reached=1)";
+  const A = {
+    touched: ` AND ${AI_D}`,
+    notTouched: ` AND NOT (${AI_D})`,
+    conn: ` AND ${AI_C}`,
+    notConn: ` AND ${AI_D} AND NOT (${AI_C})`,
+  };
+
+  const build = (
+    key: "human" | "ai",
+    label: string,
+    f: typeof H,
+    drills: [string, string, string, string]
+  ): PostChannel => {
+    const mk = (k: string, l: string, extra: string, drill: string, indent?: boolean): PostRow => ({
+      key: `${key}_${k}`,
+      label: l,
+      indent,
+      students: int(db.prepare(
+        `SELECT COUNT(*) n FROM csat_map m WHERE m.test_given='Test_Given'${where}${extra}`
+      ).get()),
+      turn: turnUpFor(where + extra),
+      drill,
+    });
+    return {
+      key,
+      label,
+      total: population,
+      rows: [
+        mk("touched", "Touched", f.touched, drills[0]),
+        mk("conn", "Connected", f.conn, drills[1], true),
+        mk("notconn", "Not connected", f.notConn, drills[2], true),
+        mk("nottouched", "Not touched", f.notTouched, drills[3]),
+      ],
+    };
+  };
+
+  return {
+    population,
+    channels: [
+      build("human", "Human call", H, ["hc=dialled", "hc=conn", "hc=noconn", "hc=never"]),
+      build("ai", "AI call", A, ["ac=dialled", "ac=conn", "ac=noconn", "ac=never"]),
+    ],
+  };
+}

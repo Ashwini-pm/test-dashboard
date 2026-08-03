@@ -36,10 +36,11 @@ export default function FunnelCallTable({
           <tr>
             <th>Stage</th>
             <th className="tnum">Students</th>
-            <th className="tnum">Called</th>
-            <th className="tnum">Picked up</th>
-            <th className="tnum">Did not pick</th>
-            <th className="tnum">Never called</th>
+            <th className="tnum">Touched</th>
+            <th className="tnum">Connected</th>
+            <th className="tnum">Not connected</th>
+            <th className="tnum">Not touched</th>
+            <th className="tnum">No calling data</th>
           </tr>
         </thead>
         <tbody>
@@ -50,7 +51,10 @@ export default function FunnelCallTable({
               <Cell n={r.called} of={r.total} href={url(r.drill, "act=called")} />
               <Cell n={r.picked} of={r.called} href={url(r.drill, "conn=1")} tone="cv-reg" />
               <Cell n={r.notPicked} of={r.called} href={url(r.drill, "act=noconn")} tone="fc-warn" />
-              <Cell n={r.notCalled} of={r.total} href={url(r.drill, "act=never")} tone="fc-bad" />
+              {/* "Not touched" is a real zero; "no calling data" is unknown. The old
+                  act=never filter merges them, so these use the hc= filters that do not. */}
+              <Cell n={r.notCalled} of={r.total} href={url(r.drill, "hc=never")} tone="fc-bad" />
+              <Cell n={r.noData} of={r.total} href={url(r.drill, "hc=nodata")} />
             </tr>
           ))}
         </tbody>

@@ -433,32 +433,60 @@ async function fetchCsatProject(): Promise<CsatPull | null> {
     const total = Number((head.headers.get("content-range") || "").split("/")[1] || 0);
     if (!total) return [];
     const pages = Math.ceil(total / PAGE);
-    const chunks = await Promise.all(
-      Array.from({ length: pages }, (_, i) =>
-        fetch(`${url}/rest/v1/${table}?${q}&limit=${PAGE}&offset=${i * PAGE}`, {
-          headers: H, cache: "no-store", signal: AbortSignal.timeout(30000),
-        }).then(async (res) => {
+    // Firing every page of every table at once meant ~56 simultaneous requests, and
+    // roughly one in ten was dropped by the connection pool. A dropped page used to
+    // fail the whole table, which reads on the dashboard as "no data" rather than as
+    // an error. Bounded concurrency plus a retry per page fixes the flakiness at the
+    // cost of a second or two on a cold hydrate.
+    const LIMIT = 5;
+    const getPage = async (i: number): Promise<Record<string, any>[]> => {
+      let lastErr: unknown;
+      for (let attempt = 0; attempt < 3; attempt++) {
+        try {
+          const res = await fetch(`${url}/rest/v1/${table}?${q}&limit=${PAGE}&offset=${i * PAGE}`, {
+            headers: H, cache: "no-store", signal: AbortSignal.timeout(30000),
+          });
           if (!res.ok) throw new Error(`${table}: HTTP ${res.status}`);
           return (await res.json()) as Record<string, any>[];
-        })
-      )
+        } catch (e) {
+          lastErr = e;
+          await new Promise((r) => setTimeout(r, 250 * (attempt + 1)));
+        }
+      }
+      throw lastErr instanceof Error ? lastErr : new Error(`${table}: page ${i} failed`);
+    };
+    const chunks: Record<string, any>[][] = new Array(pages);
+    let next = 0;
+    await Promise.all(
+      Array.from({ length: Math.min(LIMIT, pages) }, async () => {
+        for (;;) {
+          const i = next++;
+          if (i >= pages) return;
+          chunks[i] = await getPage(i);
+        }
+      })
     );
     return chunks.flat();
+  };
+  // allSettled, NOT all: one flaky fetch used to reject the whole batch and leave
+  // every CSAT table empty, which reads on the dashboard as "no data" rather than
+  // as a failure. A table that fails now loses only itself, and /coverage reports
+  // it as empty.
+  const settle = async <T,>(label: string, p: Promise<T>): Promise<{ table: string; rows: Record<string, any>[] }> => {
+    try { return { table: label, rows: (await p) as Record<string, any>[] }; }
+    catch (e) { console.error(`[db] ${label} pull failed:`, e instanceof Error ? e.message : e); return { table: label, rows: [] }; }
   };
   return Promise.all([
     // nsat4_counselling is pulled for its slot fields only. nsat4_lead_map stays
     // the NSAT-4 lead universe and the authority on offer letter / seat booked.
-    ...["nsat4", "bba", "bca", "combined", "nsat3_lead_map", "lead_map", "nsat4_lead_map", "nsat5_lead_map", "nsat4_counselling", "csat_counselling", "csat_counselling_outcomes"].map(async (t) => ({ table: t, rows: await pull(t) })),
+    ...["nsat4", "bba", "bca", "combined", "nsat3_lead_map", "lead_map", "nsat4_lead_map", "nsat5_lead_map", "nsat4_counselling", "csat_counselling", "csat_counselling_outcomes"].map((t) => settle(t, pull(t))),
     // AI calls, narrowed to rows already resolved to a cohort lead. The lead ids
     // are stored on the row, so we never join on phone.
-    (async () => ({
-      table: "ai_calls",
-      rows: await pull(
-        "ai_calls",
-        "nsat4_lead_id,csat1_lead_id,status,called_at",
-        "&or=(nsat4_lead_id.not.is.null,csat1_lead_id.not.is.null)"
-      ),
-    }))(),
+    settle("ai_calls", pull(
+      "ai_calls",
+      "nsat4_lead_id,csat1_lead_id,status,called_at",
+      "&or=(nsat4_lead_id.not.is.null,csat1_lead_id.not.is.null)"
+    )),
   ]);
 }
 

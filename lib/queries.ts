@@ -682,8 +682,13 @@ function funnelN3(round: Round = "NSAT-3", src?: Src): FunnelResult {
     ? 0
     : c(`SELECT COUNT(DISTINCT x.lead_id) n FROM counselling_sessions x ${jl(" AND x.status='held'")}`); // counselling actually done
   // NSAT-flow offers only: CRM also holds direct-admission offers (never tested)
+  // Same rule as seats: the counselling funnel only claims an offer letter when a
+  // panelist actually recorded the student. The rest are real offers but were not
+  // produced by counselling, so they sit at lead level in the Post test block.
   const offers = useCsatTest
-    ? c(`SELECT COUNT(*) n FROM csat_map WHERE round_tag IN (${inc}) AND nullif(offer_letter,'') IS NOT NULL`)
+    ? c(`SELECT COUNT(*) n FROM csat_map m WHERE m.round_tag IN (${inc})
+          AND nullif(m.offer_letter,'') IS NOT NULL
+          AND m.lead_id IN (SELECT lead_id FROM csat_outcome)`)
     : useN4
     ? c(`SELECT COUNT(*) n FROM nsat4_map WHERE nullif(offer_letter,'') IS NOT NULL`)
     : c(`SELECT COUNT(*) n FROM offer_letters x ${jl(" AND x.lead_id IN (SELECT lead_id FROM counselling_sessions WHERE status IN ('held','no_show','reschedule'))")}`);
@@ -862,7 +867,19 @@ function funnelN3(round: Round = "NSAT-3", src?: Src): FunnelResult {
           : `slots ran from ${firstSlot}${useCsatTest ? " · awaiting panelist responses" : " · attendance is not recorded"}`)
       : "counselling not started yet"
   );
-  main("offer_letter", "Offer Letter", offers, "no offer feed yet");
+  const offersUnverified = useCsatTest
+    ? c(`SELECT COUNT(*) n FROM csat_map m WHERE m.round_tag IN (${inc})
+          AND nullif(m.offer_letter,'') IS NOT NULL
+          AND m.lead_id NOT IN (SELECT lead_id FROM csat_outcome)`)
+    : 0;
+  main(
+    "offer_letter",
+    "Offer Letter",
+    offers,
+    useCsatTest && offersUnverified > 0
+      ? `${offersUnverified} more issued without a panelist response — shown at lead level, not here`
+      : "no offer feed yet"
+  );
   const seatsUnverified = useCsatTest
     ? c(`SELECT COUNT(*) n FROM csat_map m WHERE m.round_tag IN (${inc}) AND m.seat_booked='Yes'
           AND m.lead_id NOT IN (SELECT lead_id FROM csat_outcome)`)
