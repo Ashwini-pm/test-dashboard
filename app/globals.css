@@ -1592,3 +1592,8 @@ table.list tbody tr:hover td {
 .dc-bad { color: var(--red); font-weight: 700; }
 .dc-mute { color: var(--text-faint); }
 .pt-table td, .pt-table th { white-space: nowrap; }
+
+/* Reached-before-the-test block: six stage columns, child rows indented. */
+.cf-cap { display: block; margin: -2px 0 8px; }
+.cf-table th:first-child, .cf-table td:first-child { min-width: 168px; }
+.cf-table .cf-strong { font-weight: 600; }

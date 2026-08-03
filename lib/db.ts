@@ -521,8 +521,8 @@ function overlayNsat4Csat(pulls: CsatPull): void {
   // AI reach per lead, per cohort. reached = at least one 'completed' call (a real
   // conversation); called = any call at all, whatever the status.
   db.exec("DROP TABLE IF EXISTS ai_reach");
-  db.exec("CREATE TABLE ai_reach (lead_id TEXT, cohort TEXT, reached INTEGER, called INTEGER, last_call TEXT, last_conn TEXT)");
-  const insAi = db.prepare("INSERT INTO ai_reach(lead_id,cohort,reached,called,last_call,last_conn) VALUES (?,?,?,?,?,?)");
+  db.exec("CREATE TABLE ai_reach (lead_id TEXT, cohort TEXT, reached INTEGER, called INTEGER, last_call TEXT, last_conn TEXT, first_call TEXT, first_conn TEXT)");
+  const insAi = db.prepare("INSERT INTO ai_reach(lead_id,cohort,reached,called,last_call,last_conn,first_call,first_conn) VALUES (?,?,?,?,?,?,?,?)");
   // CSAT-1 counselling slots, same shape as NSAT-4: a booking_id means a slot is
   // booked, and there is no attendance column, so "counselling done" is unknowable.
   // Panelist outcomes, synced from the responses sheet every 15 min. The ONLY
@@ -549,8 +549,8 @@ function overlayNsat4Csat(pulls: CsatPull): void {
   const insTag = db.prepare("INSERT INTO csat_tag(lead_id,kind,key,label) VALUES (?,?,?,?)");
 
   db.exec("DROP TABLE IF EXISTS csat_map");
-  db.exec("CREATE TABLE csat_map (lead_id TEXT, round_tag TEXT, registered TEXT, campaign_source TEXT, origin TEXT, crm_source_category TEXT, total_calls INTEGER, connected_calls INTEGER, first_signup TEXT, first_call_at TEXT, last_call_at TEXT, counsellor TEXT, name TEXT, phone TEXT, utm_campaign TEXT, crm_program TEXT, signup_programs TEXT, test_given TEXT, test_given_at TEXT, test_result TEXT, last_call_at2 TEXT, offer_letter TEXT, seat_booked TEXT, seat_booked_date TEXT)");
-  const insCsat = db.prepare("INSERT INTO csat_map(lead_id,round_tag,registered,campaign_source,origin,crm_source_category,total_calls,connected_calls,first_signup,first_call_at,last_call_at,counsellor,name,phone,utm_campaign,crm_program,signup_programs,test_given,test_given_at,test_result,last_call_at2,offer_letter,seat_booked,seat_booked_date) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)");
+  db.exec("CREATE TABLE csat_map (lead_id TEXT, round_tag TEXT, registered TEXT, campaign_source TEXT, origin TEXT, crm_source_category TEXT, total_calls INTEGER, connected_calls INTEGER, first_signup TEXT, first_call_at TEXT, last_call_at TEXT, counsellor TEXT, name TEXT, phone TEXT, utm_campaign TEXT, crm_program TEXT, signup_programs TEXT, test_given TEXT, test_given_at TEXT, test_result TEXT, last_call_at2 TEXT, first_conn_at TEXT, last_conn_at TEXT, offer_letter TEXT, seat_booked TEXT, seat_booked_date TEXT)");
+  const insCsat = db.prepare("INSERT INTO csat_map(lead_id,round_tag,registered,campaign_source,origin,crm_source_category,total_calls,connected_calls,first_signup,first_call_at,last_call_at,counsellor,name,phone,utm_campaign,crm_program,signup_programs,test_given,test_given_at,test_result,last_call_at2,first_conn_at,last_conn_at,offer_letter,seat_booked,seat_booked_date) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)");
   const tx = db.transaction(() => {
     db.prepare("DELETE FROM registrations WHERE nsat_round IN ('NSAT-4','CSAT','CSAT-BBA','CSAT-BCA','CSAT-COMB')").run();
     db.prepare("DELETE FROM leads WHERE nsat_round IN ('NSAT-4','CSAT','CSAT-BBA','CSAT-BCA','CSAT-COMB')").run();
@@ -564,7 +564,7 @@ function overlayNsat4Csat(pulls: CsatPull): void {
       }
       if (table === "ai_calls") {
         // collapse call rows to one flag pair per lead before inserting
-        const acc = new Map<string, { reached: boolean; last: string; lastConn: string }>();
+        const acc = new Map<string, { reached: boolean; last: string; lastConn: string; first: string; firstConn: string }>();
         for (const r of rows) {
           const done = String(r.status ?? "") === "completed";
           const at = r.called_at == null ? "" : String(r.called_at);
@@ -573,13 +573,20 @@ function overlayNsat4Csat(pulls: CsatPull): void {
             if (!lid) continue;
             const k = `${coh}\u0000${lid}`;
             const cur = acc.get(k);
-            if (cur) { if (done) { cur.reached = true; if (at > cur.lastConn) cur.lastConn = at; } if (at > cur.last) cur.last = at; }
-            else acc.set(k, { reached: done, last: at, lastConn: done ? at : "" });
+            if (cur) {
+              if (done) {
+                cur.reached = true;
+                if (at > cur.lastConn) cur.lastConn = at;
+                if (!cur.firstConn || at < cur.firstConn) cur.firstConn = at;
+              }
+              if (at > cur.last) cur.last = at;
+              if (!cur.first || at < cur.first) cur.first = at;
+            } else acc.set(k, { reached: done, last: at, lastConn: done ? at : "", first: at, firstConn: done ? at : "" });
           }
         }
         for (const [k, v] of acc) {
           const [coh, lid] = k.split("\u0000");
-          insAi.run(lid, coh, v.reached ? 1 : 0, 1, v.last || null, v.lastConn || null);
+          insAi.run(lid, coh, v.reached ? 1 : 0, 1, v.last || null, v.lastConn || null, v.first || null, v.firstConn || null);
         }
         continue;
       }
@@ -631,7 +638,7 @@ function overlayNsat4Csat(pulls: CsatPull): void {
         for (const r of rows) {
           const st = String(r.signup_tables ?? "");
           const tag = st === "bba" ? "CSAT-BBA" : st === "bca" ? "CSAT-BCA" : "CSAT-COMB";
-          insCsat.run(String(r.lead_id ?? ""), tag, r.registered ?? null, r.campaign_source ?? null, r.origin ?? null, r.crm_source_category ?? null, r.total_calls ?? null, r.connected_calls ?? null, r.first_signup ?? null, r.first_call_at ?? null, r.last_call_at ?? null, r.counsellor ?? null, r.name ?? null, r.phone ?? null, r.utm_campaign ?? null, r.crm_program ?? null, r.signup_programs ?? null, r.test_given ?? null, r.test_given_at ?? null, r.test_result ?? null, r.last_call_at ?? null, r.offer_letter ?? null, r.seat_booked ?? null, r.seat_booked_date ?? null);
+          insCsat.run(String(r.lead_id ?? ""), tag, r.registered ?? null, r.campaign_source ?? null, r.origin ?? null, r.crm_source_category ?? null, r.total_calls ?? null, r.connected_calls ?? null, r.first_signup ?? null, r.first_call_at ?? null, r.last_call_at ?? null, r.counsellor ?? null, r.name ?? null, r.phone ?? null, r.utm_campaign ?? null, r.crm_program ?? null, r.signup_programs ?? null, r.test_given ?? null, r.test_given_at ?? null, r.test_result ?? null, r.last_call_at ?? null, r.first_connected_at ?? null, r.last_connected_at ?? null, r.offer_letter ?? null, r.seat_booked ?? null, r.seat_booked_date ?? null);
           // one tag row per (lead, value); dedupe so a cell listing the same value
           // twice in different case does not count the lead twice
           const lid = String(r.lead_id ?? "");

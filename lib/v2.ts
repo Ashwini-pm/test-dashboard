@@ -565,6 +565,9 @@ export interface DrillParams {
   ch?: string | null;      // CSAT-1 channel that connected: both | hu | ai | no
   hc?: string | null;      // human calling: dialled | conn | noconn | never | nodata
   ac?: string | null;      // AI calling:    dialled | conn | noconn | never
+  pt?: string | null;      // contact by test day, person: touched | conn | noconn | never | nodata
+  pta?: string | null;     // contact by test day, AI:     touched | conn | noconn | never
+  fstage?: string | null;  // funnel stage, panelist-gated: lead|reg|test|couns|ol|sb
 }
 
 // Distinct values for the filter dropdowns on the drill page.
@@ -711,6 +714,39 @@ export function drill(ctx: Ctx, round: string | null | undefined, p: DrillParams
     if (p.ac === "conn")    { w.push(C); bits.push("AI connected"); }
     if (p.ac === "noconn")  { w.push(`${D} AND NOT (${C})`); bits.push("dialled by AI, no answer"); }
     if (p.ac === "never")   { w.push(`NOT (${D})`); bits.push("never dialled by AI"); }
+  }
+  // Contact up to and including the test day. Post-test contact cannot explain
+  // whether someone sat the test, so it is excluded here on purpose.
+  if ((p.pt || p.pta) && m.table === "csat_map") {
+    const CUT = "2026-07-31";
+    const hTouch = `m.first_call_at IS NOT NULL AND m.first_call_at < '${CUT}'`;
+    const hConn  = `m.first_conn_at IS NOT NULL AND m.first_conn_at < '${CUT}'`;
+    const aOne = (col: string) =>
+      `EXISTS (SELECT 1 FROM ai_reach a WHERE a.cohort='CSAT-1' AND a.lead_id=m.lead_id` +
+      ` AND a.${col} IS NOT NULL AND a.${col} < '${CUT}')`;
+    const aTouch = aOne("first_call");
+    const aConn = aOne("first_conn");
+    if (p.pt === "touched") { w.push(hTouch); bits.push("a person touched them by test day"); }
+    if (p.pt === "conn")    { w.push(`${hTouch} AND ${hConn}`); bits.push("a person spoke to them by test day"); }
+    if (p.pt === "noconn")  { w.push(`${hTouch} AND NOT (${hConn})`); bits.push("dialled by a person, never got through"); }
+    if (p.pt === "never")   { w.push(`m.total_calls IS NOT NULL AND NOT (${hTouch})`); bits.push("never dialled by a person before the test"); }
+    if (p.pt === "nodata")  { w.push("m.total_calls IS NULL"); bits.push("no calling record"); }
+    if (p.pta === "touched") { w.push(aTouch); bits.push("AI dialled them by test day"); }
+    if (p.pta === "conn")    { w.push(`${aTouch} AND ${aConn}`); bits.push("AI spoke to them by test day"); }
+    if (p.pta === "noconn")  { w.push(`${aTouch} AND NOT (${aConn})`); bits.push("dialled by AI, never got through"); }
+    if (p.pta === "never")   { w.push(`NOT (${aTouch})`); bits.push("never dialled by AI before the test"); }
+  }
+  // Funnel stages for the contact block. Offer letter and seat booked are gated
+  // on a panelist response: a CRM outcome on a lead that never went through CSAT
+  // counselling is a lead-level result, not a CSAT funnel result.
+  if (p.fstage && m.table === "csat_map") {
+    const HAS_RESP = "m.lead_id IN (SELECT lead_id FROM csat_outcome)";
+    if (p.fstage === "reg")   { w.push(`m.${paid}='paid'`); bits.push("registered"); }
+    if (p.fstage === "test")  { w.push("m.test_given='Test_Given'"); bits.push("gave the test"); }
+    if (p.fstage === "couns") { w.push("m.lead_id IN (SELECT lead_id FROM csat_outcome WHERE status LIKE 'Happening%')"); bits.push("counselling done"); }
+    if (p.fstage === "ol")    { w.push(`${HAS_RESP} AND nullif(m.offer_letter,'') IS NOT NULL`); bits.push("offer letter, panelist verified"); }
+    if (p.fstage === "sb")    { w.push(`${HAS_RESP} AND m.seat_booked='Yes'`); bits.push("seat booked, panelist verified"); }
+    if (p.fstage === "lead")  bits.push("all leads");
   }
   if (p.pstage && m.table === "csat_map") {
     if (p.pstage === "slot")  { w.push("m.lead_id IN (SELECT lead_id FROM csat_slots)"); bits.push("counselling slot booked"); }

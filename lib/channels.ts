@@ -664,3 +664,129 @@ export function csatPostTestChannels(where = ""): { channels: PostChannel[]; pop
     ],
   };
 }
+
+// ---------------------------------------------------------------------------
+// Contact before the test, crossed with every funnel stage.
+//
+// The question this answers: of the students we reached before the test, how
+// many carried through to each stage — and does reaching them change anything.
+//
+// CONTACT WINDOW is calls up to and including the test day. Contact after the
+// test cannot explain whether someone sat the test, so it is excluded.
+//
+// Touched reads first_call_at, Connected reads first_conn_at, straight from the
+// lead map. The invariant that a connected call is also a call is enforced in
+// the data, not patched here, so Connected is always a subset of Touched.
+//
+// OFFER LETTER and SEAT BOOKED are gated on the lead having a panelist
+// response. A CRM offer letter on a lead that never went through CSAT
+// counselling is a lead-level outcome, not a CSAT funnel outcome.
+//
+// Human and AI are two separate tables and are never added: the same student
+// is dialled by both.
+// ---------------------------------------------------------------------------
+
+/** end of the test day, exclusive — contact at or after this is post-test */
+export const PRE_TEST_CUT = "2026-07-31";
+
+export interface StageCell { n: number; pct: number | null; drill: string }
+export interface ContactRow {
+  key: string;
+  label: string;
+  indent?: boolean;
+  strong?: boolean;
+  cells: StageCell[];
+}
+export interface ContactFunnel {
+  key: "human" | "ai";
+  label: string;
+  note: string;
+  rows: ContactRow[];
+}
+
+const STAGES: { key: string; label: string; cond: string; drill: string }[] = [
+  { key: "lead",  label: "Lead",        cond: "1=1", drill: "fstage=lead" },
+  { key: "reg",   label: "Registered",  cond: "m.registered='paid'", drill: "fstage=reg" },
+  { key: "test",  label: "Test given",  cond: "m.test_given='Test_Given'", drill: "fstage=test" },
+  { key: "couns", label: "Counselled",
+    cond: "m.lead_id IN (SELECT lead_id FROM csat_outcome WHERE status LIKE 'Happening%')",
+    drill: "fstage=couns" },
+  { key: "ol",    label: "OL released",
+    cond: "m.lead_id IN (SELECT lead_id FROM csat_outcome) AND nullif(m.offer_letter,'') IS NOT NULL",
+    drill: "fstage=ol" },
+  { key: "sb",    label: "Seat booked",
+    cond: "m.lead_id IN (SELECT lead_id FROM csat_outcome) AND m.seat_booked='Yes'",
+    drill: "fstage=sb" },
+];
+
+const H = {
+  conn:    `m.first_conn_at IS NOT NULL AND m.first_conn_at < '${PRE_TEST_CUT}'`,
+  touched: `m.first_call_at IS NOT NULL AND m.first_call_at < '${PRE_TEST_CUT}'`,
+  hasRow:  "m.total_calls IS NOT NULL",
+};
+const A = {
+  conn:    `EXISTS (SELECT 1 FROM ai_reach a WHERE a.cohort='CSAT-1' AND a.lead_id=m.lead_id AND a.first_conn IS NOT NULL AND a.first_conn < '${PRE_TEST_CUT}')`,
+  touched: `EXISTS (SELECT 1 FROM ai_reach a WHERE a.cohort='CSAT-1' AND a.lead_id=m.lead_id AND a.first_call IS NOT NULL AND a.first_call < '${PRE_TEST_CUT}')`,
+};
+
+/** SQL predicates for the contact buckets of one channel */
+function buckets(channel: "human" | "ai"): { key: string; label: string; cond: string; indent?: boolean; strong?: boolean; drill: string }[] {
+  const p = channel === "human" ? "pt" : "pta";
+  if (channel === "ai") {
+    return [
+      { key: "touched",    label: "Touched",        cond: A.touched, strong: true, drill: `${p}=touched` },
+      { key: "conn",       label: "Connected",      cond: `${A.touched} AND ${A.conn}`, indent: true, drill: `${p}=conn` },
+      { key: "notconn",    label: "Not connected",  cond: `${A.touched} AND NOT (${A.conn})`, indent: true, drill: `${p}=noconn` },
+      { key: "nottouched", label: "Not touched",    cond: `NOT (${A.touched})`, strong: true, drill: `${p}=never` },
+    ];
+  }
+  return [
+    { key: "touched",    label: "Touched",           cond: H.touched, strong: true, drill: `${p}=touched` },
+    { key: "conn",       label: "Connected",         cond: `${H.touched} AND ${H.conn}`, indent: true, drill: `${p}=conn` },
+    { key: "notconn",    label: "Not connected",     cond: `${H.touched} AND NOT (${H.conn})`, indent: true, drill: `${p}=noconn` },
+    { key: "nottouched", label: "Not touched",       cond: `${H.hasRow} AND NOT (${H.touched})`, strong: true, drill: `${p}=never` },
+    { key: "norec",      label: "No calling record", cond: `NOT (${H.hasRow})`, drill: `${p}=nodata` },
+  ];
+}
+
+export function contactFunnel(where = ""): ContactFunnel[] | null {
+  if (!tableReady("csat_map")) return null;
+  const count = (cond: string) => int(db.prepare(
+    `SELECT COUNT(*) n FROM csat_map m WHERE ${cond}${where}`
+  ).get());
+
+  const build = (channel: "human" | "ai", label: string, note: string): ContactFunnel => {
+    const bs = buckets(channel);
+    // Total is every lead, so the column sums are visible against it.
+    const all: ContactRow = {
+      key: "total", label: "Total", strong: true,
+      cells: STAGES.map((s) => ({ n: count(s.cond), pct: null, drill: s.drill })),
+    };
+    const rows = bs.map((b) => {
+      const cells = STAGES.map((s) => ({
+        n: count(`(${b.cond}) AND (${s.cond})`),
+        pct: null as number | null,
+        drill: `${b.drill}&${s.drill}`,
+      }));
+      return { key: b.key, label: b.label, indent: b.indent, strong: b.strong, cells };
+    });
+    // Progressive: each stage against the stage before it, within the same row.
+    for (const r of [all, ...rows]) {
+      for (let i = 1; i < r.cells.length; i++) {
+        const prev = r.cells[i - 1].n;
+        r.cells[i].pct = prev > 0 ? Math.round((r.cells[i].n / prev) * 100) : null;
+      }
+    }
+    return { key: channel, label, note, rows: [all, ...rows] };
+  };
+
+  const out = [
+    build("human", "Human calling (CRM)",
+      "contact up to the test day, from the CRM call log"),
+    build("ai", "AI calling (Alchemyst)",
+      "contact up to the test day, from per-call Alchemyst records"),
+  ];
+  return out[0].rows[0].cells[0].n > 0 ? out : null;
+}
+
+export const CONTACT_STAGE_LABELS = STAGES.map((s) => s.label);
