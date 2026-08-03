@@ -8,9 +8,8 @@ import {
 import Sankey from "@/components/Sankey";
 import SourcePie from "@/components/SourcePie";
 import FunnelCallTable from "@/components/FunnelCallTable";
-import PostTestChannels from "@/components/PostTestChannels";
 import ContactFunnel from "@/components/ContactFunnel";
-import { csatPostTestChannels, contactFunnel } from "@/lib/channels";
+import { contactFunnel } from "@/lib/channels";
 import { ActionCoverage, UntouchedAgeing, SourceActionTable, SpeedToLead } from "@/components/CoverageViews";
 import { funnel, type Round } from "@/lib/queries";
 import FunnelView from "@/components/FunnelView";
@@ -47,7 +46,6 @@ export default async function Overview({ searchParams }: { searchParams: Promise
   const postTest = hasCoverage ? postTestTable(ctx, round) : [];
   // CSAT-1 only: post-test communication by channel, then turn-up from the panelist
   // form. Requires a turn-up source, which no other round has.
-  const postCh = ctx === "CSAT" ? csatPostTestChannels(` AND m.round_tag IN (${ctxRounds(ctx, round).map((r) => `'${r}'`).join(",")})`) : null;
   const cFunnel = ctx === "CSAT" ? contactFunnel(` AND m.round_tag IN (${ctxRounds(ctx, round).map((r) => `'${r}'`).join(",")})`) : null;
   const maxCount = Math.max(1, ...f.rows.filter((r) => r.count !== null).map((r) => r.count as number));
   // The four numbers the CBO tracks — same funnel everywhere, that's the point.
@@ -146,7 +144,6 @@ export default async function Overview({ searchParams }: { searchParams: Promise
           </div>
         </section>
         {cFunnel && <ContactFunnel funnels={cFunnel} qs={dq} />}
-        {postCh && <PostTestChannels channels={postCh.channels} population={postCh.population} qs={dq} />}
         </>
       )}
 

@@ -26,7 +26,7 @@ export function roundOptions(ctx: Ctx): string[] {
 }
 // No "All": rounds are separate cohorts. Default = the running round.
 export function defaultRound(ctx: Ctx): string {
-  return ctx === "CSAT" ? "All" : "NSAT-3";
+  return ctx === "CSAT" ? "All" : "NSAT-4";
 }
 export function inClause(ctx: Ctx, round?: string | null): string {
   return ctxRounds(ctx, round).map((r) => `'${r}'`).join(",");
