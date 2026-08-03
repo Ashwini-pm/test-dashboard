@@ -760,6 +760,8 @@ function funnelN3(round: Round = "NSAT-3", src?: Src): FunnelResult {
   progSplit("lead", "");
   main("registration", "Registration", reg, "no registration feed");
   progSplit("registration", " AND registered='paid'");
+  const csatPass = useCsatTest ? csatTest("test_result='Pass'") : 0;
+  const csatFail = useCsatTest ? csatTest("test_result='Fail'") : 0;
   if (useCsatTest) {
     // share of REGISTRATIONS, not leads: an unregistered lead was never due to
     // sit the test, so counting them in the denominator understates attendance.
@@ -776,6 +778,16 @@ function funnelN3(round: Round = "NSAT-3", src?: Src): FunnelResult {
         ` · ${Math.round(pctReg)}% of those registered`,
     });
     prev = pctReg;
+    // Pass / Fail exist for CSAT-1 now, so stop treating the test as a single step.
+    if (csatPass + csatFail > 0) {
+      rows[rows.length - 1].expandable = true;
+      const pending = appeared - csatPass - csatFail;
+      rows.push({ key: "csat_pass", label: "Result: Pass", count: csatPass, pct: pb(csatPass), drop: null, detail: true,
+                  note: `${csatPass.toLocaleString("en-IN")} pass / ${csatFail} fail${pending > 0 ? ` / ${pending} result pending` : ""}` });
+      rows.push({ key: "csat_fail", label: "Result: Fail", count: csatFail, pct: pb(csatFail), drop: null, detail: true, sub: true });
+      if (pending > 0)
+        rows.push({ key: "csat_pending", label: "Result pending", count: pending, pct: pb(pending), drop: null, detail: true, sub: true });
+    }
   } else {
     main("test", "Test", appeared, "awaiting exam feed");
   }

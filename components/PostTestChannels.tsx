@@ -78,7 +78,7 @@ export default function PostTestChannels({
         <header>
           <h3>Post test · by channel</h3>
           <span className="cap">
-            the {nf(population)} students who gave the test · touched, then connected, then did they turn up
+            the {nf(population)} students who gave the test · calls from 30 Jul, the test day, onward
           </span>
         </header>
 
@@ -91,9 +91,11 @@ export default function PostTestChannels({
           {" "}Turn-up comes from the panelist form only. <b>To be rescheduled</b> and <b>Not known yet</b> are kept
           apart from <b>Did not turn up</b> on purpose: a rescheduled session is not a no-show, and a student the
           panelists have not filed yet is not a no-show either.
-          {" "}Human call counts are cumulative, not post-test only — the CRM gives total and connected calls with no
-          date split, so a call made before the exam counts as a touch here. AI counts are cumulative for the same
-          reason.
+          {" "}<b>Touched counts calls from 30 Jul onward</b>, the test day. For humans that comes from the last-call
+          timestamp, which is exact for &quot;was there a call in the window&quot;. <b>Connected is not exact for humans</b>:
+          the CRM has no last-connected timestamp, so it reads &quot;called in the window and connected at some point&quot;.
+          Adding Last_Connected_Call to the lead map, which your master sheet already has, makes it exact. AI keeps
+          per-call timestamps, so both columns are exact there.
           {" "}WhatsApp is not shown: there is no WhatsApp feed for CSAT-1 yet.
         </p>
       </div>

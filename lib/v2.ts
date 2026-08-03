@@ -408,6 +408,15 @@ export function preTestTable(ctx: Ctx, round?: string | null): FunnelCallRow[] {
   rows.push({ key: "lead", label: "Lead (all)", ...callCols(m, ""), drill: "stage=lead" });
   rows.push({ key: "reg", label: "Registered", ...callCols(m, ` AND m.${paid}='paid'`), drill: "reg=paid" });
   rows.push({ key: "unreg", label: "Not registered", ...callCols(m, ` AND m.${paid}<>'paid'`), drill: "reg=unpaid" });
+  // Calling coverage of the students who actually sat the test. CSAT-1 records this
+  // on the map as test_given; NSAT-4 as test_result.
+  if (m.table === "csat_map") {
+    const t = callCols(m, " AND m.test_given='Test_Given'");
+    if (t.total > 0) rows.push({ key: "test", label: "Test given", ...t, drill: "tg=given" });
+  } else if (m.table === "nsat4_map") {
+    const t = callCols(m, " AND nullif(m.test_result,'') IS NOT NULL");
+    if (t.total > 0) rows.push({ key: "test", label: "Test given", ...t, drill: "pstage=test" });
+  }
 
   // The Combined page offers BBA and BCA together, so the signup carries no
   // program. Bifurcate it by the program the CRM assigned instead.

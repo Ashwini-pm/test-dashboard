@@ -560,6 +560,10 @@ export function csatCalling(where = ""): CsatCalling | null {
 // exam counts as a touch here. Stated on the page rather than silently implied.
 // ---------------------------------------------------------------------------
 
+/** The CSAT-1 test ran 30-31 Jul, so a call from 30 Jul onward is a post-test call.
+ *  A single cutoff rather than each student's own test_date, as instructed. */
+export const POST_TEST_FROM = "2026-07-30";
+
 export interface TurnUp { turnedUp: number; noShow: number; rescheduled: number; unknown: number }
 export interface PostRow {
   key: string;
@@ -601,14 +605,21 @@ export function csatPostTestChannels(where = ""): { channels: PostChannel[]; pop
   ).get());
   if (population === 0) return null;
 
+  // Human: last_call_at is the most recent call, so last_call_at >= the cutoff means
+  // at least one call landed in the window, and < the cutoff means none did. Exact
+  // for "called after the test". Connected in the window is NOT derivable: the CRM
+  // gives no last-connected timestamp, so this is "called in the window and connected
+  // at some point", which the block labels as such.
+  const HT = `m.last_call_at2 IS NOT NULL AND m.last_call_at2 >= '${POST_TEST_FROM}'`;
   const H = {
-    touched: " AND coalesce(m.total_calls,0) > 0",
-    notTouched: " AND coalesce(m.total_calls,0) = 0",
-    conn: " AND coalesce(m.total_calls,0) > 0 AND coalesce(m.connected_calls,0) > 0",
-    notConn: " AND coalesce(m.total_calls,0) > 0 AND coalesce(m.connected_calls,0) = 0",
+    touched: ` AND ${HT}`,
+    notTouched: ` AND NOT (${HT})`,
+    conn: ` AND ${HT} AND coalesce(m.connected_calls,0) > 0`,
+    notConn: ` AND ${HT} AND coalesce(m.connected_calls,0) = 0`,
   };
-  const AI_D = "m.lead_id IN (SELECT lead_id FROM ai_reach WHERE cohort='CSAT-1')";
-  const AI_C = "m.lead_id IN (SELECT lead_id FROM ai_reach WHERE cohort='CSAT-1' AND reached=1)";
+  // AI keeps per-call timestamps, so both touched and connected are exact in window.
+  const AI_D = `m.lead_id IN (SELECT lead_id FROM ai_reach WHERE cohort='CSAT-1' AND last_call >= '${POST_TEST_FROM}')`;
+  const AI_C = `m.lead_id IN (SELECT lead_id FROM ai_reach WHERE cohort='CSAT-1' AND last_conn >= '${POST_TEST_FROM}')`;
   const A = {
     touched: ` AND ${AI_D}`,
     notTouched: ` AND NOT (${AI_D})`,
