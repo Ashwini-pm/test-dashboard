@@ -182,6 +182,13 @@ export function sourceStages(ctx: Ctx, round?: string | null): SourceStage[] {
     ["registration", "Registration", fromMap(` AND m.${paidCol}='paid'`)],
     // NSAT-4/5 carry the test outcome on the map itself, so read it from there
     // instead of the (empty) base stage tables.
+    ...(m.table === "csat_map"
+      ? ([
+          ["slotb", "Slot booked", fromMap(" AND m.lead_id IN (SELECT lead_id FROM csat_slots)")],
+          ["ol", "Offer letter", fromMap(" AND nullif(m.offer_letter,'') IS NOT NULL")],
+          ["seat", "Seat booked", fromMap(" AND m.seat_booked = 'Yes'")],
+        ] as [string, string, string][])
+      : []),
     ...(m.table === "nsat4_map"
       ? ([
           ["result", "Test given", fromMap(" AND nullif(m.test_result,'') IS NOT NULL")],
@@ -421,6 +428,25 @@ export function preTestTable(ctx: Ctx, round?: string | null): FunnelCallRow[] {
 export function postTestTable(ctx: Ctx, round?: string | null): FunnelCallRow[] {
   const m = mapTableFor(ctx, round);
   if (!m) return [];
+  // CSAT-1's post-test stages live on its own tables, not in the base stage tables:
+  // slots in csat_slots, attendance in csat_outcome (panelist form), offer letter and
+  // seat on the map itself. Without this the block read "no post-test data yet" while
+  // the funnel two blocks above showed 138 slots, 15 offers and 8 seats.
+  if (m.table === "csat_map") {
+    const out: FunnelCallRow[] = [];
+    const defs: [string, string, string][] = [
+      ["slot", "Slot booked", " AND m.lead_id IN (SELECT lead_id FROM csat_slots)"],
+      ["couns", "Counselling done", " AND m.lead_id IN (SELECT lead_id FROM csat_outcome WHERE status LIKE 'Happening%')"],
+      ["ol", "Offer letter", " AND nullif(m.offer_letter,'') IS NOT NULL"],
+      ["seat", "Seat booked", " AND m.seat_booked = 'Yes'"],
+    ];
+    for (const [key, label, scope] of defs) {
+      let cols;
+      try { cols = callCols(m, scope); } catch { continue; }
+      if (cols.total > 0) out.push({ key, label, ...cols, drill: `pstage=${key}` });
+    }
+    return out;
+  }
   // NSAT-4: offer_letter / seat_booked are columns on the map itself.
   if (m.table === "nsat4_map") {
     const out: FunnelCallRow[] = [];
@@ -655,6 +681,12 @@ export function drill(ctx: Ctx, round: string | null | undefined, p: DrillParams
     if (p.ac === "conn")    { w.push(C); bits.push("AI connected"); }
     if (p.ac === "noconn")  { w.push(`${D} AND NOT (${C})`); bits.push("dialled by AI, no answer"); }
     if (p.ac === "never")   { w.push(`NOT (${D})`); bits.push("never dialled by AI"); }
+  }
+  if (p.pstage && m.table === "csat_map") {
+    if (p.pstage === "slot")  { w.push("m.lead_id IN (SELECT lead_id FROM csat_slots)"); bits.push("counselling slot booked"); }
+    if (p.pstage === "couns") { w.push("m.lead_id IN (SELECT lead_id FROM csat_outcome WHERE status LIKE 'Happening%')"); bits.push("counselling done"); }
+    if (p.pstage === "ol")    { w.push("nullif(m.offer_letter,'') IS NOT NULL"); bits.push("offer letter"); }
+    if (p.pstage === "seat")  { w.push("m.seat_booked = 'Yes'"); bits.push("seat booked"); }
   }
   if (p.pstage && m.table === "nsat4_map") {
     if (p.pstage === "test") { w.push("nullif(m.test_result,'') IS NOT NULL"); bits.push("test given"); }
@@ -1024,18 +1056,26 @@ export function sankeyTree(ctx: Ctx, round?: string | null): SNode {
   // in the base stage tables (which hold no NSAT-4 rows). Without this the Sankey
   // showed Test given 0 while the funnel above it showed 387.
   const isN4 = mu?.table === "nsat4_map";
+  const isCsat = mu?.table === "csat_map";
   const fromN4 = (where: string) => ids(`SELECT lead_id FROM nsat4_map WHERE ${where}`);
+  const fromCsat = (where: string) => ids(`SELECT lead_id FROM csat_map m WHERE ${where}${mu?.where ?? ""}`);
   const appeared = isN4
     ? fromN4("nullif(test_result,'') IS NOT NULL")
-    : inRound("test_results", "x.appeared=1");
+    : isCsat
+      ? fromCsat("m.test_given='Test_Given'")
+      : inRound("test_results", "x.appeared=1");
   const pass = isN4 ? fromN4("lower(test_result)='pass'") : inRound("test_results", "x.result='pass'");
   const fail = isN4 ? fromN4("lower(test_result)='fail'") : inRound("test_results", "x.result='fail'");
-  const slot = isN4
+  const slot = isCsat
+    ? ids(`SELECT DISTINCT s.lead_id FROM csat_slots s JOIN csat_map m ON m.lead_id=s.lead_id WHERE 1=1${mu?.where ?? ""}`)
+    : isN4
     ? ids("SELECT DISTINCT lead_id FROM nsat4_slots")
     : inRound("counselling_sessions", "x.scheduled_at IS NOT NULL");
   // NSAT-4's counselling sheet records the booking, never the attendance, so
   // "held" is genuinely unknown there and must not gate the offer/seat sets.
-  const held = isN4 ? new Set<string>() : inRound("counselling_sessions", "x.status='held'");
+  const held = isCsat
+    ? ids(`SELECT o.lead_id FROM csat_outcome o JOIN csat_map m ON m.lead_id=o.lead_id WHERE o.status LIKE 'Happening%'${mu?.where ?? ""}`)
+    : isN4 ? new Set<string>() : inRound("counselling_sessions", "x.status='held'");
   const cohort = isN4 ? all : inRound("counselling_sessions", "x.status IN ('held','no_show','reschedule')");
   const olAll = isN4 ? fromN4("nullif(offer_letter,'') IS NOT NULL") : inRound("offer_letters");
   // OL age buckets (business rule): live = first 3 days, expiring = day 3-4, expired = 5+ days
@@ -1125,6 +1165,20 @@ export function sankeyTree(ctx: Ctx, round?: string | null): SNode {
     node("pass_no_slot", "No slot booked", diff(sPass, slotAny).size, "bad", comms(diff(sPass, slotAny), "pass_no_slot")),
   ]);
   const sPending = diff(diff(sApp, pass), fail);
+  // CSAT-1 records only whether the student gave the test, no pass/fail, so its test
+  // node splits on slot booked rather than on result. Offers and seats are NOT nested
+  // under it: only 4 of 15 offer letters gave the test and only 3 booked a slot, so
+  // hanging them here would draw a progression that did not happen. The funnel above
+  // the diagram carries those counts.
+  const csatSlot = inter(sApp, slotAny);
+  const csatHeld = inter(csatSlot, held);
+  const testNodeCsat = node("test", "Test given", sApp.size, "good", [
+    node("slot", "Slot booked", csatSlot.size, "good", [
+      node("held", "Counselling done", csatHeld.size, "good", comms(csatHeld, "csat_held")),
+      node("slot_pending", "Counselling pending", diff(csatSlot, held).size, "warn", comms(diff(csatSlot, held), "csat_slot_pending")),
+    ]),
+    node("no_slot", "No slot booked", diff(sApp, slotAny).size, "bad", comms(diff(sApp, slotAny), "csat_no_slot")),
+  ]);
   const testNode = node("test", "Test given", sApp.size, "good", [
     passNode,
     node("fail", "Failed", sFail.size, "warn", comms(sFail, "fail")),
@@ -1134,7 +1188,7 @@ export function sankeyTree(ctx: Ctx, round?: string | null): SNode {
       : []),
   ]);
   const regNode = node("reg", "Registered", sReg.size, "good", [
-    testNode,
+    isCsat ? testNodeCsat : testNode,
     node("reg_no_test", "Did not give test", sReg.size - sApp.size, "bad", comms(diff(sReg, appeared), "reg_no_test", "reg=paid")),
   ], useCsatMap ? "reg=paid" : undefined);
   return node("lead", "Leads", all.size, "neutral", [

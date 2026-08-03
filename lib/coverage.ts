@@ -148,3 +148,121 @@ export function auditMemory(): { table: string; rows: number; ok: boolean }[] {
     return { table: t, rows, ok: rows > 0 };
   });
 }
+
+// ---------------------------------------------------------------------------
+// Block coverage: data exists but a page renders it blank.
+//
+// The table checks above would not have caught the CSAT post-test block reading
+// "no post-test data yet" while the funnel two blocks above it showed 138 slots,
+// 15 offer letters and 8 seats. The table was fine; the block had no branch for
+// that round. So compare, per round, what the funnel knows against what the
+// blocks render.
+// ---------------------------------------------------------------------------
+
+import { funnel, type Round } from "./queries";
+import { postTestTable, preTestTable, sourceStages, sankeyTree, parseCtx, type Ctx, type SNode } from "./v2";
+
+const ROUNDS: { ctx: Ctx; round: string; funnelRound: Round }[] = [
+  { ctx: "NSAT", round: "NSAT-2", funnelRound: "NSAT-2" as Round },
+  { ctx: "NSAT", round: "NSAT-3", funnelRound: "NSAT-3" as Round },
+  { ctx: "NSAT", round: "NSAT-4", funnelRound: "NSAT-4" as Round },
+  { ctx: "NSAT", round: "NSAT-5", funnelRound: "NSAT-5" as Round },
+  { ctx: "CSAT", round: "All", funnelRound: "CSAT" as Round },
+  { ctx: "CSAT", round: "BBA", funnelRound: "CSAT-BBA" as Round },
+  { ctx: "CSAT", round: "BCA", funnelRound: "CSAT-BCA" as Round },
+  { ctx: "CSAT", round: "Combined", funnelRound: "CSAT-COMB" as Round },
+];
+
+/** Post-test funnel stages: if any of these has a count, the block must not be empty. */
+const POST_KEYS = new Set(["slot_form", "counselling", "offer_letter", "seat_payment"]);
+
+export interface BlockIssue { round: string; issue: string; expected?: string }
+
+/**
+ * Gaps we know about and accept, with the reason. Kept separate so the actionable
+ * list stays short — a check that always shows the same three warnings gets ignored,
+ * which defeats the point of having it.
+ */
+const EXPECTED: Record<string, string> = {
+  "NSAT / NSAT-2": "legacy round with no lead map, so it has no coverage or source blocks — ask if you want it wired",
+};
+
+export function auditBlocks(): BlockIssue[] {
+  const raw: BlockIssue[] = [];
+  for (const r of ROUNDS) {
+    let rows: { key: string; count: number | null }[] = [];
+    try {
+      rows = funnel(r.funnelRound).rows as { key: string; count: number | null }[];
+    } catch {
+      raw.push({ round: `${r.ctx} / ${r.round}`, issue: "funnel() threw" });
+      continue;
+    }
+    const has = (k: string) => Number(rows.find((x) => x.key === k)?.count ?? 0);
+    const leads = has("lead");
+    if (leads === 0) continue; // an empty round is not a coverage problem
+
+    const postInFunnel = [...POST_KEYS].filter((k) => has(k) > 0);
+    let post: unknown[] = [];
+    let pre: unknown[] = [];
+    let donuts: { total: number }[] = [];
+    try { post = postTestTable(r.ctx, r.round); } catch { /* counted below */ }
+    try { pre = preTestTable(r.ctx, r.round); } catch { /* counted below */ }
+    try { donuts = sourceStages(r.ctx, r.round) as { total: number }[]; } catch { /* counted below */ }
+
+    if (postInFunnel.length > 0 && post.length === 0) {
+      raw.push({
+        round: `${r.ctx} / ${r.round}`,
+        issue: `funnel has post-test data (${postInFunnel.join(", ")}) but the Post test block is empty — that block needs a branch for this round`,
+      });
+    }
+    if (pre.length === 0) {
+      raw.push({ round: `${r.ctx} / ${r.round}`, issue: "Pre test block is empty" });
+    }
+    if (donuts.length === 0 || donuts.every((d) => d.total === 0)) {
+      raw.push({ round: `${r.ctx} / ${r.round}`, issue: "Stages-by-source donuts are empty" });
+    }
+
+    // The Flow diagram reads its own id sets, so it can disagree with the funnel
+    // sitting directly above it — that is how CSAT showed "Test given 0" next to a
+    // funnel reading 280. Compare the stages both of them claim to know.
+    let tree: SNode | null = null;
+    try { tree = sankeyTree(r.ctx, r.round); } catch {
+      raw.push({ round: `${r.ctx} / ${r.round}`, issue: "sankeyTree() threw" });
+    }
+    if (tree) {
+      const flat: SNode[] = [];
+      const walk = (n: SNode) => { flat.push(n); (n.children ?? []).forEach(walk); };
+      walk(tree);
+      const find = (label: string) => flat.find((n) => n.label.toLowerCase() === label)?.n ?? null;
+      const pairs: [string, string][] = [
+        ["lead", "leads"], ["registration", "registered"], ["test", "test given"],
+      ];
+      for (const [fk, sl] of pairs) {
+        const f = has(fk);
+        const sv = find(sl);
+        if (f > 0 && sv !== null && sv === 0) {
+          raw.push({
+            round: `${r.ctx} / ${r.round}`,
+            issue: `funnel says ${fk} = ${f.toLocaleString("en-IN")} but the Flow diagram shows "${sl}" = 0 — the sankey needs a branch for this round`,
+          });
+        }
+      }
+      // every box must contain its children exactly, or the diagram contradicts itself
+      for (const n of flat) {
+        const kids = n.children ?? [];
+        if (!kids.length) continue;
+        const sum = kids.reduce((t, c) => t + c.n, 0);
+        if (sum !== n.n) {
+          raw.push({
+            round: `${r.ctx} / ${r.round}`,
+            issue: `Flow box "${n.label}" = ${n.n.toLocaleString("en-IN")} but its children sum to ${sum.toLocaleString("en-IN")}`,
+          });
+        }
+      }
+    }
+  }
+  // tag the accepted ones instead of dropping them, so nothing is hidden
+  return raw.map((i) => (EXPECTED[i.round] ? { ...i, expected: EXPECTED[i.round] } : i));
+}
+
+export { parseCtx };

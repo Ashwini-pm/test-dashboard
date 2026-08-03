@@ -1,5 +1,5 @@
 import { ensureFresh } from "@/lib/db";
-import { auditTables, auditMemory } from "@/lib/coverage";
+import { auditTables, auditMemory, auditBlocks } from "@/lib/coverage";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -17,8 +17,12 @@ export default async function DataCoverage() {
   await ensureFresh();
   const tables = await auditTables();
   const mem = auditMemory();
+  const allBlocks = auditBlocks();
+  const blocks = allBlocks.filter((b) => !b.expected);
+  const known = allBlocks.filter((b) => b.expected);
   const problems = tables.filter((t) => t.state === "unreadable" || t.state === "not-pulled");
   const memBad = mem.filter((m) => !m.ok);
+  const anything = problems.length + memBad.length + blocks.length;
 
   return (
     <>
@@ -30,13 +34,13 @@ export default async function DataCoverage() {
       </div>
 
       <section className="grid mb">
-        <div className={`card${problems.length || memBad.length ? " co-caveat" : ""}`}>
+        <div className={`card${anything ? " co-caveat" : ""}`}>
           <header>
-            <h3>{problems.length || memBad.length ? "Needs attention" : "Everything readable is mapped"}</h3>
+            <h3>{anything ? `Needs attention (${anything})` : "Everything readable is mapped and every block renders"}</h3>
             <span className="cap">run this after any pipeline change</span>
           </header>
-          {problems.length === 0 && memBad.length === 0 ? (
-            <p className="sb-empty">Every table the key can read is either in use or deliberately ignored, and every in-memory table has rows.</p>
+          {anything === 0 ? (
+            <p className="sb-empty">Every table the key can read is either in use or deliberately ignored, every in-memory table has rows, and no page is rendering a block empty while the data exists.</p>
           ) : (
             <ul className="dc-list">
               {problems.map((t) => (
@@ -45,10 +49,26 @@ export default async function DataCoverage() {
               {memBad.map((m) => (
                 <li key={m.table}><b>{m.table}</b> — in-memory table is empty after hydrate</li>
               ))}
+              {blocks.map((b, i) => (
+                <li key={`b${i}`}><b>{b.round}</b> — {b.issue}</li>
+              ))}
             </ul>
           )}
         </div>
       </section>
+
+      {known.length > 0 && (
+        <section className="grid mb">
+          <div className="card">
+            <header><h3>Known gaps</h3><span className="cap">accepted, with the reason — not regressions</span></header>
+            <ul className="dc-list dc-mute">
+              {known.map((b, i) => (
+                <li key={`k${i}`}><b>{b.round}</b> — {b.issue}<br /><i>{b.expected}</i></li>
+              ))}
+            </ul>
+          </div>
+        </section>
+      )}
 
       <section className="grid mb">
         <div className="card">
