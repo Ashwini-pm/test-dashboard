@@ -124,6 +124,42 @@ function effectiveSource(r: Record<string, any>): string | null {
   return UTM_TO_CATEGORY[utm] ?? null;
 }
 
+// Reporting buckets for CSAT, agreed with the business. One place, so By source,
+// Source x action, the Sankey bars and the drill can never disagree.
+//
+// SOURCE: five named sources, Inbound folded into Organic, everything else Others
+// including no-source-at-all. The CRM's own taxonomy has 20 values; these six are
+// what anyone actually reports on.
+const SRC_MAIN = new Set(["Influencers", "Organic", "Direct", "Paid Performance Google", "Youtube Channels"]);
+function sourceBucket(r: Record<string, any>): string {
+  const raw = effectiveSource(r);
+  if (!raw) return "Others";
+  const c = raw.trim().toLowerCase() === "inbound" ? "Organic" : raw.trim();
+  return SRC_MAIN.has(c) ? c : "Others";
+}
+
+// MEDIUM: seven named mediums plus NURTURING, everything else OTHERS. Case is
+// normalised (YT_Dedicated / YT_DEDICATED / yt_Dedicated are one medium) and only
+// the FIRST value of a comma cell counts, so a lead with two mediums is counted
+// once and the columns add back to the lead total.
+//
+// GA placeholders are treated as no medium, not as a medium called "(not set)".
+const MED_ALIAS: Record<string, string> = {
+  ig_reel: "IG_REEL", yt_dedicated: "YT_DEDICATED", yt_integrated: "YT_INTEGRATED",
+  website: "WEBSITE", web: "WEBSITE", webpage: "WEBSITE", organic: "ORGANIC",
+  whatsapp: "WHATSAPP", google_ads: "GOOGLE_ADS", nurturing: "NURTURING",
+};
+const MED_JUNK = new Set(["(not set)", "(not%20set)", "224"]);
+function mediumBucket(r: Record<string, any>): string {
+  const raw = String(r.utm_medium ?? "").trim();
+  for (const part of raw.split(",")) {
+    const v = part.trim();
+    if (!v || MED_JUNK.has(v)) continue;
+    return MED_ALIAS[v.toLowerCase()] ?? "OTHERS";
+  }
+  return "OTHERS";
+}
+
 function repopulate(table: string, rows: Record<string, unknown>[]): void {
   const wipe = db.prepare(`DELETE FROM ${table}`);
   if (rows.length === 0) {
@@ -689,7 +725,7 @@ function overlayNsat4Csat(pulls: CsatPull): void {
         for (const r of real) {
           const st = String(r.signup_tables ?? "");
           const tag = st === "bba" ? "CSAT-BBA" : st === "bca" ? "CSAT-BCA" : "CSAT-COMB";
-          insCsat.run(String(r.lead_id ?? ""), tag, r.registered ?? null, r.campaign_source ?? null, r.origin ?? null, effectiveSource(r), r.total_calls ?? null, r.connected_calls ?? null, r.first_signup ?? null, r.first_call_at ?? null, r.last_call_at ?? null, r.counsellor ?? null, r.name ?? null, r.phone ?? null, r.utm_campaign ?? null, r.crm_program ?? null, r.signup_programs ?? null, r.test_given ?? null, r.test_given_at ?? null, r.test_result ?? null, r.last_call_at ?? null, r.first_connected_at ?? null, r.last_connected_at ?? null, r.offer_letter ?? null, r.seat_booked ?? null, r.seat_booked_date ?? null);
+          insCsat.run(String(r.lead_id ?? ""), tag, r.registered ?? null, r.campaign_source ?? null, r.origin ?? null, sourceBucket(r), r.total_calls ?? null, r.connected_calls ?? null, r.first_signup ?? null, r.first_call_at ?? null, r.last_call_at ?? null, r.counsellor ?? null, r.name ?? null, r.phone ?? null, r.utm_campaign ?? null, r.crm_program ?? null, r.signup_programs ?? null, r.test_given ?? null, r.test_given_at ?? null, r.test_result ?? null, r.last_call_at ?? null, r.first_connected_at ?? null, r.last_connected_at ?? null, r.offer_letter ?? null, r.seat_booked ?? null, r.seat_booked_date ?? null);
           // one tag row per (lead, value); dedupe so a cell listing the same value
           // twice in different case does not count the lead twice
           const lid = String(r.lead_id ?? "");
@@ -699,7 +735,8 @@ function overlayNsat4Csat(pulls: CsatPull): void {
           // Collegedunia / Consultants / Youtube Channels / Marketing Events / Referral
           // all "Influencers" or "organic". UTM campaign name still comes from the form,
           // which is correct — that IS a form field.
-          for (const [kind, raw] of [["src", effectiveSource(r)], ["utm", r.utm_campaign]] as const) {
+          insTag.run(lid, "med", mediumBucket(r).toLowerCase(), mediumBucket(r));
+          for (const [kind, raw] of [["src", sourceBucket(r)], ["utm", r.utm_campaign]] as const) {
             const cell = String(raw ?? "").trim();
             const vals = cell ? cell.split(",").map((v) => v.trim()).filter(Boolean) : [];
             const seenK = new Set<string>();

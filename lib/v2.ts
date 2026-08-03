@@ -725,9 +725,9 @@ export function drill(ctx: Ctx, round: string | null | undefined, p: DrillParams
     const i = p.tag.indexOf(":");
     const kind = i > 0 ? p.tag.slice(0, i) : "";
     const key = i > 0 ? p.tag.slice(i + 1) : "";
-    if ((kind === "src" || kind === "utm") && key) {
+    if ((kind === "src" || kind === "utm" || kind === "med") && key) {
       w.push(`m.lead_id IN (SELECT lead_id FROM csat_tag WHERE kind='${esc(kind)}' AND key='${esc(key.toLowerCase())}')`);
-      bits.push(`${kind === "src" ? "source" : "utm"} ${key}`);
+      bits.push(`${kind === "src" ? "source" : kind === "med" ? "medium" : "utm"} ${key}`);
     }
   }
   // Calling block filters. Unlike act=never, these keep "never dialled"

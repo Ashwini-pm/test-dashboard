@@ -199,8 +199,10 @@ export interface AttendRow {
 export interface Attendance {
   all: AttendRow;
   byProgramme: AttendRow[];
-  /** campaign_source, comma-split — DOUBLE COUNTS, does not sum to registrations */
+  /** the six agreed source buckets — one per lead, so these DO sum to the total */
   bySource: AttendRow[];
+  /** the medium buckets — one per lead (first value only), so these sum too */
+  byMedium: AttendRow[];
   /** utm_campaign, comma-split, only names above minUtmReg — also double counts */
   byUtm: AttendRow[];
   minUtmReg: number;
@@ -245,7 +247,7 @@ function attendRow(key: string, label: string, where: string): AttendRow {
  * Leads are counted DISTINCT per key, so a cell repeating a value in a different
  * case ('organic, Organic') still counts the lead once.
  */
-function attendanceByTag(kind: "src" | "utm", where: string): AttendRow[] {
+function attendanceByTag(kind: "src" | "utm" | "med", where: string): AttendRow[] {
   const rows = db
     .prepare(
       `SELECT t.key,
@@ -328,12 +330,16 @@ export function csatAttendance(where = "", minUtmReg = 20): Attendance | null {
     .sort((a, b) => b.registered - a.registered || (b.leads ?? 0) - (a.leads ?? 0));
   // UTM names: by Appeared %, since a raw count just re-ranks by volume. Small
   // names are excluded or a 2-registration name lands on top at 50%.
+  // Medium buckets: the seven the business reports on, NURTURING, and OTHERS.
+  // Ordered by registrations like By source, not by rate, so volume reads first.
+  const byMedium = attendanceByTag("med", tagWhere)
+    .sort((a, b) => b.registered - a.registered || (b.leads ?? 0) - (a.leads ?? 0));
   const byUtm = attendanceByTag("utm", tagWhere)
     .filter((r) => r.registered >= minUtmReg && !UTM_PLACEHOLDER.has(r.label.toLowerCase()))
     .sort((a, b) => b.given / b.registered - a.given / a.registered || b.registered - a.registered);
 
   return {
-    all, byProgramme, bySource, byUtm, minUtmReg,
+    all, byProgramme, bySource, byMedium, byUtm, minUtmReg,
     calling: csatCalledVsAppeared(where),
     lastSync: ls?.d ?? null,
   };
