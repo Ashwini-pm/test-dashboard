@@ -1619,3 +1619,144 @@ table.list tbody tr:hover td {
 .sa-caret.on { transform: rotate(90deg); }
 .sa-count { font-weight: 400; font-size: 11.5px; color: var(--muted, #6b7280); }
 .sa-child { padding-left: 26px; color: var(--muted, #6b7280); }
+
+/* ==========================================================================
+   TABLE SYSTEM — one look for every table on the dashboard.
+   Appended last so it wins over the earlier per-block rules without having to
+   unpick them. Purely visual: no markup, no query, no number changes.
+   ========================================================================== */
+
+/* Scroll container: rounded, clipped, so a wide table never bleeds past the card
+   and the sticky header has something to sit against. */
+.cv-scroll {
+  overflow: auto;
+  max-height: none;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+}
+/* Long tables still cap their height; short ones must not gain dead space. */
+.dh-scroll, .table-scroll { max-height: 72vh; }
+
+.cv-table {
+  border-collapse: separate;
+  border-spacing: 0;
+  width: 100%;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Header: small, uppercase, tracked out. Sticks while the body scrolls. */
+.cv-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--surface-muted);
+  color: var(--text-muted);
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--divider);
+  white-space: nowrap;
+}
+/* second header row (the drill filter row) sits under the labels */
+.cv-table thead tr:nth-child(2) th { top: 37px; z-index: 1; text-transform: none; letter-spacing: 0; }
+
+.cv-table tbody td {
+  padding: 9px 14px;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+  color: var(--text);
+}
+.cv-table tbody tr:last-child td { border-bottom: none; }
+.cv-table tbody tr:hover td { background: color-mix(in srgb, var(--cyan) 6%, transparent); }
+
+/* Numbers right-aligned and never wrapping away from their percentage. */
+.cv-table td.tnum, .cv-table th.tnum { text-align: right; font-variant-numeric: tabular-nums; }
+.cv-table td.tnum { font-weight: 500; }
+
+/* The label column carries the weight; it also stays put on horizontal scroll. */
+.cv-table tbody td:first-child,
+.cv-table thead th:first-child {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  background: var(--surface);
+  font-weight: 500;
+}
+.cv-table thead th:first-child { z-index: 3; background: var(--surface-muted); }
+.cv-table tbody tr:hover td:first-child { background: color-mix(in srgb, var(--cyan) 6%, var(--surface)); }
+
+/* Total / emphasis rows: a top rule and a tint, not bold everything. */
+.cv-table tfoot td,
+.co-strong td {
+  font-weight: 650;
+  background: var(--surface-muted);
+  border-top: 1px solid var(--divider);
+  border-bottom: none;
+}
+.co-strong td:first-child { background: var(--surface-muted); }
+.cv-table tfoot td { position: sticky; bottom: 0; z-index: 2; }
+
+/* Percentages ride alongside their number, quieter and slightly smaller. */
+.fc-pct { color: var(--text-faint); font-size: 11px; font-weight: 500; margin-left: 3px; }
+
+/* Semantic cell colours, kept muted so a table is not a traffic light. */
+.cv-reg   { color: var(--green); font-weight: 600; }
+.fc-bad   { color: var(--red); }
+.fc-warn  { color: #a07c00; }
+.fc-zero  { color: var(--text-faint); font-weight: 400; }
+.cv-zero  { color: var(--red); font-weight: 600; }
+
+/* Child rows: indented with a hairline, so nesting reads without extra chrome. */
+.cb-inner, .sa-child, .cf-table .cb-inner {
+  padding-left: 30px !important;
+  position: relative;
+  color: var(--text-muted);
+  font-weight: 400;
+}
+.cb-inner::before, .sa-child::before {
+  content: "";
+  position: absolute;
+  left: 16px; top: 50%;
+  width: 8px; height: 1px;
+  background: var(--divider);
+}
+
+/* Collapsed group row. */
+.sa-group > td { background: color-mix(in srgb, var(--cyan) 4%, var(--surface-muted)); }
+.sa-toggle { display: inline-flex; align-items: center; gap: 8px; font: inherit; font-weight: 600;
+             background: none; border: 0; padding: 0; cursor: pointer; color: inherit; }
+.sa-toggle:hover { color: var(--primary-2); }
+.sa-caret { font-size: 10px; opacity: .6; transition: transform .15s ease; }
+.sa-caret.on { transform: rotate(90deg); }
+.sa-count { font-weight: 400; font-size: 11px; color: var(--text-faint); }
+
+/* Section label above each table inside a card. */
+.ta-h {
+  margin: 26px 0 10px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+.ta-h:first-of-type { margin-top: 2px; }
+.cf-cap { display: block; margin: -4px 0 10px; color: var(--text-faint); font-size: 11.5px; }
+
+/* Links inside tables: underline only on hover, so a dense table stays calm. */
+.cv-table .sb-link { border-bottom: 1px solid transparent; }
+.cv-table .sb-link:hover { border-bottom-color: var(--primary-2); }
+
+/* Card rhythm: a little more air between stacked blocks. */
+.grid.mb { margin-bottom: 22px; }
+.card > header { margin-bottom: 16px; }
+
+@media (max-width: 720px) {
+  .cv-table { font-size: 12px; }
+  .cv-table thead th { padding: 9px 10px; }
+  .cv-table tbody td { padding: 8px 10px; }
+  .cv-table tbody td:first-child, .cv-table thead th:first-child { position: static; }
+}
