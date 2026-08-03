@@ -81,8 +81,7 @@ export function stageCounts(ctx: Ctx, round?: string | null): StageCounts {
   const jl = (t: string, extra = "") =>
     `SELECT COUNT(DISTINCT x.lead_id) n FROM ${t} x JOIN leads l ON l.lead_id=x.lead_id WHERE l.nsat_round IN (${inc})${extra}`;
   const COH = ` AND x.lead_id IN (SELECT lead_id FROM counselling_sessions WHERE status IN ('held','no_show','reschedule'))`;
-  // CSAT Lead + Registration come from the lead_map reconciliation (csat_map),
-  // not the raw base tables. Downstream stages stay 0 for CSAT (no such data).
+  // CSAT reads csat_map end to end, not the raw base tables.
   const mu = mapUniverse(ctx, round);
   // NSAT-4 keeps its test outcome, offer letter and seat on the map itself; the
   // base test_results / offer_letters / payments tables have no NSAT-4 rows, so
@@ -90,6 +89,13 @@ export function stageCounts(ctx: Ctx, round?: string | null): StageCounts {
   const n4 = mu?.table === "nsat4_map";
   const fromN4 = (where: string) => q(`SELECT COUNT(*) n FROM nsat4_map WHERE ${where}`);
   const n4Appeared = n4 ? fromN4("nullif(test_result,'') IS NOT NULL") : 0;
+  // CSAT's later stages live on csat_map + csat_slots + csat_outcome. Without this
+  // the tiles fell through to counselling_sessions and payments, which hold no
+  // CSAT rows at all, so Counselled and Seat booked read 0 while the funnel
+  // directly below them read 52 and 8 off the right tables.
+  const cs = ctx === "CSAT" && mu?.table === "csat_map";
+  const fromCsat = (where: string) =>
+    q(`SELECT COUNT(*) n FROM csat_map m WHERE ${where}${mu!.where}`);
   return {
     leads: mu
       ? q(`SELECT COUNT(*) n FROM ${mu.table} WHERE 1=1${mu.where}`)
@@ -103,21 +109,37 @@ export function stageCounts(ctx: Ctx, round?: string | null): StageCounts {
       : ctx === "CSAT" && mu?.table === "csat_map"
         ? q(`SELECT COUNT(*) n FROM csat_map WHERE registered='paid' AND test_given='Test_Given'${mu.where}`)
         : q(jl("test_results", " AND x.appeared=1")),
-    pass: n4 ? fromN4("test_result = 'Pass'") : q(jl("test_results", " AND x.result='pass'")),
-    fail: n4 ? fromN4("test_result = 'Fail'") : q(jl("test_results", " AND x.result='fail'")),
+    pass: n4 ? fromN4("test_result = 'Pass'")
+      : cs ? fromCsat("m.test_result = 'Pass'")
+      : q(jl("test_results", " AND x.result='pass'")),
+    fail: n4 ? fromN4("test_result = 'Fail'")
+      : cs ? fromCsat("m.test_result = 'Fail'")
+      : q(jl("test_results", " AND x.result='fail'")),
     // NSAT-4 slots come from nsat4_counselling; it has no attendance column, so
     // held stays 0 instead of being inferred from the booking.
     slotBooked: n4
       ? q("SELECT COUNT(DISTINCT lead_id) n FROM nsat4_slots WHERE lead_id IN (SELECT lead_id FROM nsat4_map)")
+      : cs
+      ? fromCsat("m.lead_id IN (SELECT lead_id FROM csat_slots)")
       : q(jl("counselling_sessions", " AND x.scheduled_at IS NOT NULL")),
     // NSAT-4 attendance is the panelist form, same as CSAT-1's.
     held: n4
       ? fromN4("lead_id IN (SELECT lead_id FROM nsat_outcome WHERE status LIKE 'Happening%')")
+      : cs
+      ? fromCsat("m.lead_id IN (SELECT lead_id FROM csat_outcome WHERE status LIKE 'Happening%')")
       : q(jl("counselling_sessions", " AND x.status='held'")),
     // Panelist-verified only, the same rule CSAT-1 uses: the counselling funnel
     // does not claim offers or seats no panelist ever recorded.
-    offers: n4 ? fromN4("nullif(offer_letter,'') IS NOT NULL AND lead_id IN (SELECT lead_id FROM nsat_outcome)") : q(jl("offer_letters", COH)),
-    seats: n4 ? fromN4("seat_booked = 'Yes' AND lead_id IN (SELECT lead_id FROM nsat_outcome)") : q(jl("payments", " AND x.paid_at >= '2026-07-16'" + COH)),
+    offers: n4
+      ? fromN4("nullif(offer_letter,'') IS NOT NULL AND lead_id IN (SELECT lead_id FROM nsat_outcome)")
+      : cs
+      ? fromCsat("nullif(m.offer_letter,'') IS NOT NULL AND m.lead_id IN (SELECT lead_id FROM csat_outcome)")
+      : q(jl("offer_letters", COH)),
+    seats: n4
+      ? fromN4("seat_booked = 'Yes' AND lead_id IN (SELECT lead_id FROM nsat_outcome)")
+      : cs
+      ? fromCsat("m.seat_booked = 'Yes' AND m.lead_id IN (SELECT lead_id FROM csat_outcome)")
+      : q(jl("payments", " AND x.paid_at >= '2026-07-16'" + COH)),
   };
 }
 
