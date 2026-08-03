@@ -724,12 +724,20 @@ export function drill(ctx: Ctx, round: string | null | undefined, p: DrillParams
   }
   // Contact up to and including the test day. Post-test contact cannot explain
   // whether someone sat the test, so it is excluded here on purpose.
-  if ((p.pt || p.pta) && m.table === "csat_map") {
-    const CUT = "2026-07-31";
+  if ((p.pt || p.pta) && (m.table === "csat_map" || m.table === "nsat4_map")) {
+    const isC = m.table === "csat_map";
+    // CSAT-1 tested on 30 Jul, NSAT-4 on 28 and 29 Jul.
+    const CUT = isC ? "2026-07-31" : "2026-07-30";
+    const AICOH = isC ? "CSAT-1" : "NSAT-4";
     const hTouch = `m.first_call_at IS NOT NULL AND m.first_call_at < '${CUT}'`;
-    const hConn  = `m.first_conn_at IS NOT NULL AND m.first_conn_at < '${CUT}'`;
+    // NSAT-4's CRM feed has no first-connected timestamp, so there Connected means
+    // "dialled before the test and connected at some point". Still a subset of
+    // Touched, which is what keeps the lists consistent with the table.
+    const hConn  = isC
+      ? `m.first_conn_at IS NOT NULL AND m.first_conn_at < '${CUT}'`
+      : "coalesce(m.connected_calls,0) > 0";
     const aOne = (col: string) =>
-      `EXISTS (SELECT 1 FROM ai_reach a WHERE a.cohort='CSAT-1' AND a.lead_id=m.lead_id` +
+      `EXISTS (SELECT 1 FROM ai_reach a WHERE a.cohort='${AICOH}' AND a.lead_id=m.lead_id` +
       ` AND a.${col} IS NOT NULL AND a.${col} < '${CUT}')`;
     const aTouch = aOne("first_call");
     const aConn = aOne("first_conn");
@@ -750,12 +758,16 @@ export function drill(ctx: Ctx, round: string | null | undefined, p: DrillParams
     const pw = progWhere(p.prog, "m");
     if (pw) { w.push(pw.replace(/^ AND /, "")); bits.push(`programme ${p.prog}`); }
   }
-  if (p.fstage && m.table === "csat_map") {
-    const HAS_RESP = "m.lead_id IN (SELECT lead_id FROM csat_outcome)";
+  if (p.fstage && (m.table === "csat_map" || m.table === "nsat4_map")) {
+    const isC = m.table === "csat_map";
+    const OUT = isC ? "csat_outcome" : "nsat_outcome";
+    const SLOTS = isC ? "csat_slots" : "nsat4_slots";
+    const TEST = isC ? "m.test_given='Test_Given'" : "nullif(m.test_result,'') IS NOT NULL";
+    const HAS_RESP = `m.lead_id IN (SELECT lead_id FROM ${OUT})`;
     if (p.fstage === "reg")   { w.push(`m.${paid}='paid'`); bits.push("registered"); }
-    if (p.fstage === "test")  { w.push("m.test_given='Test_Given'"); bits.push("gave the test"); }
-    if (p.fstage === "slot")  { w.push("m.lead_id IN (SELECT lead_id FROM csat_slots)"); bits.push("counselling slot booked"); }
-    if (p.fstage === "couns") { w.push("m.lead_id IN (SELECT lead_id FROM csat_outcome WHERE status LIKE 'Happening%')"); bits.push("counselling done"); }
+    if (p.fstage === "test")  { w.push(TEST); bits.push("gave the test"); }
+    if (p.fstage === "slot")  { w.push(`m.lead_id IN (SELECT lead_id FROM ${SLOTS})`); bits.push("counselling slot booked"); }
+    if (p.fstage === "couns") { w.push(`m.lead_id IN (SELECT lead_id FROM ${OUT} WHERE status LIKE 'Happening%')`); bits.push("counselling done"); }
     if (p.fstage === "ol")    { w.push(`${HAS_RESP} AND nullif(m.offer_letter,'') IS NOT NULL`); bits.push("offer letter, panelist verified"); }
     if (p.fstage === "sb")    { w.push(`${HAS_RESP} AND m.seat_booked='Yes'`); bits.push("seat booked, panelist verified"); }
     if (p.fstage === "lead")  bits.push("all leads");

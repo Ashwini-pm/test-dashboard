@@ -9,7 +9,7 @@ import Sankey from "@/components/Sankey";
 import SourcePie from "@/components/SourcePie";
 import FunnelCallTable from "@/components/FunnelCallTable";
 import ContactFunnel from "@/components/ContactFunnel";
-import { contactFunnel } from "@/lib/channels";
+import { contactFunnel, contactMeta } from "@/lib/channels";
 import { ActionCoverage, UntouchedAgeing, SourceActionTable, SpeedToLead } from "@/components/CoverageViews";
 import { funnel, type Round } from "@/lib/queries";
 import FunnelView from "@/components/FunnelView";
@@ -54,7 +54,12 @@ export default async function Overview({ searchParams }: { searchParams: Promise
   const postTest = hasCoverage ? postTestTable(ctx, round) : [];
   // CSAT-1 only: post-test communication by channel, then turn-up from the panelist
   // form. Requires a turn-up source, which no other round has.
-  const cFunnel = ctx === "CSAT" ? contactFunnel(` AND m.round_tag IN (${ctxRounds(ctx, round).map((r) => `'${r}'`).join(",")})`, prog || null) : null;
+  // Reached-before-the-test, for whichever cohort has the pieces: CSAT-1 and
+  // NSAT-4 both do. Everything cohort-specific lives in lib/channels.
+  const cKey = ctx === "CSAT" ? "CSAT" : round === "NSAT-4" ? "NSAT-4" : null;
+  const cMeta = cKey ? contactMeta(cKey) : null;
+  const cWhere = ctx === "CSAT" ? ` AND m.round_tag IN (${ctxRounds(ctx, round).map((r) => `'${r}'`).join(",")})` : "";
+  const cFunnel = cKey ? contactFunnel(cKey, cWhere, prog || undefined) : null;
   const maxCount = Math.max(1, ...f.rows.filter((r) => r.count !== null).map((r) => r.count as number));
   // The four numbers the CBO tracks — same funnel everywhere, that's the point.
   // NSAT-4's counselling sheet records the booking, not the attendance, so a
@@ -152,7 +157,16 @@ export default async function Overview({ searchParams }: { searchParams: Promise
             <FunnelCallTable rows={postTest} qs={dqp} emptyNote="No post-test data yet." />
           </div>
         </section>
-        {cFunnel && <ContactFunnel funnels={cFunnel} qs={dqp} />}
+        {cFunnel && cMeta && (
+          <ContactFunnel
+            funnels={cFunnel}
+            qs={dqp}
+            labels={cMeta.labels}
+            humanConnExact={cMeta.humanConnExact}
+            cut={cMeta.cut}
+            title={ctx === "CSAT" ? "calls up to and including 30 Jul, the test day" : "calls up to and including 29 Jul, the second test day"}
+          />
+        )}
         </>
       )}
 

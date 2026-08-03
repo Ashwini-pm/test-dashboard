@@ -584,9 +584,6 @@ export function csatCalling(where = ""): CsatCalling | null {
 // is dialled by both.
 // ---------------------------------------------------------------------------
 
-/** end of the test day, exclusive — contact at or after this is post-test */
-export const PRE_TEST_CUT = "2026-07-31";
-
 export interface StageCell { n: number; pct: number | null; drill: string }
 export interface ContactRow {
   key: string;
@@ -602,77 +599,107 @@ export interface ContactFunnel {
   rows: ContactRow[];
 }
 
-const STAGES: { key: string; label: string; cond: string; drill: string }[] = [
-  { key: "lead",  label: "Lead",        cond: "1=1", drill: "fstage=lead" },
-  { key: "reg",   label: "Registered",  cond: "m.registered='paid'", drill: "fstage=reg" },
-  { key: "test",  label: "Test given",  cond: "m.test_given='Test_Given'", drill: "fstage=test" },
-  { key: "slot",  label: "Slot booked",
-    cond: "m.lead_id IN (SELECT lead_id FROM csat_slots)",
-    drill: "fstage=slot" },
-  { key: "couns", label: "Counselled",
-    cond: "m.lead_id IN (SELECT lead_id FROM csat_outcome WHERE status LIKE 'Happening%')",
-    drill: "fstage=couns" },
-  { key: "ol",    label: "OL released",
-    cond: "m.lead_id IN (SELECT lead_id FROM csat_outcome) AND nullif(m.offer_letter,'') IS NOT NULL",
-    drill: "fstage=ol" },
-  { key: "sb",    label: "Seat booked",
-    cond: "m.lead_id IN (SELECT lead_id FROM csat_outcome) AND m.seat_booked='Yes'",
-    drill: "fstage=sb" },
-];
-
-const H = {
-  conn:    `m.first_conn_at IS NOT NULL AND m.first_conn_at < '${PRE_TEST_CUT}'`,
-  touched: `m.first_call_at IS NOT NULL AND m.first_call_at < '${PRE_TEST_CUT}'`,
-  hasRow:  "m.total_calls IS NOT NULL",
+// One cohort's shape. Everything that differs between CSAT-1 and NSAT-4 lives
+// here, so the funnel logic itself is written once.
+//
+// `cut` is the day AFTER the last test day, exclusive. CSAT-1 tested on 30 Jul,
+// NSAT-4 on 28 and 29 Jul.
+//
+// `humanConnExact` is the honest part. CSAT-1's lead map carries a
+// first_connected_at, so "spoke to them before the test" is exact. NSAT-4's does
+// not, because query 6778 never returned one, so there Connected reads "dialled
+// before the test AND connected at some point". That is still a strict subset of
+// Touched, so the table adds up, but it can credit a connection that actually
+// happened after the test. Adding first_connected_at to 6778 makes it exact.
+interface Cohort {
+  table: string;
+  cut: string;
+  outcome: string;
+  slots: string;
+  aiCohort: string;
+  testCond: string;
+  humanConnExact: boolean;
+}
+const COHORTS: Record<string, Cohort> = {
+  CSAT: {
+    table: "csat_map", cut: "2026-07-31", outcome: "csat_outcome", slots: "csat_slots",
+    aiCohort: "CSAT-1", testCond: "m.test_given='Test_Given'", humanConnExact: true,
+  },
+  "NSAT-4": {
+    table: "nsat4_map", cut: "2026-07-30", outcome: "nsat_outcome", slots: "nsat4_slots",
+    aiCohort: "NSAT-4", testCond: "nullif(m.test_result,'') IS NOT NULL", humanConnExact: false,
+  },
 };
-const A = {
-  conn:    `EXISTS (SELECT 1 FROM ai_reach a WHERE a.cohort='CSAT-1' AND a.lead_id=m.lead_id AND a.first_conn IS NOT NULL AND a.first_conn < '${PRE_TEST_CUT}')`,
-  touched: `EXISTS (SELECT 1 FROM ai_reach a WHERE a.cohort='CSAT-1' AND a.lead_id=m.lead_id AND a.first_call IS NOT NULL AND a.first_call < '${PRE_TEST_CUT}')`,
-};
 
-/** SQL predicates for the contact buckets of one channel */
-function buckets(channel: "human" | "ai"): { key: string; label: string; cond: string; indent?: boolean; strong?: boolean; drill: string }[] {
-  const p = channel === "human" ? "pt" : "pta";
-  if (channel === "ai") {
-    return [
-      { key: "touched",    label: "Touched",        cond: A.touched, strong: true, drill: `${p}=touched` },
-      { key: "conn",       label: "Connected",      cond: `${A.touched} AND ${A.conn}`, indent: true, drill: `${p}=conn` },
-      { key: "notconn",    label: "Not connected",  cond: `${A.touched} AND NOT (${A.conn})`, indent: true, drill: `${p}=noconn` },
-      { key: "nottouched", label: "Not touched",    cond: `NOT (${A.touched})`, strong: true, drill: `${p}=never` },
-    ];
-  }
+function stagesFor(c: Cohort): { key: string; label: string; cond: string; drill: string }[] {
+  const RESP = `m.lead_id IN (SELECT lead_id FROM ${c.outcome})`;
   return [
-    { key: "touched",    label: "Touched",           cond: H.touched, strong: true, drill: `${p}=touched` },
-    { key: "conn",       label: "Connected",         cond: `${H.touched} AND ${H.conn}`, indent: true, drill: `${p}=conn` },
-    { key: "notconn",    label: "Not connected",     cond: `${H.touched} AND NOT (${H.conn})`, indent: true, drill: `${p}=noconn` },
-    { key: "nottouched", label: "Not touched",       cond: `${H.hasRow} AND NOT (${H.touched})`, strong: true, drill: `${p}=never` },
-    { key: "norec",      label: "No calling record", cond: `NOT (${H.hasRow})`, drill: `${p}=nodata` },
+    { key: "lead",  label: "Lead",         cond: "1=1", drill: "fstage=lead" },
+    { key: "reg",   label: "Registered",   cond: "m.registered='paid'", drill: "fstage=reg" },
+    { key: "test",  label: "Test given",   cond: c.testCond, drill: "fstage=test" },
+    { key: "slot",  label: "Slot booked",  cond: `m.lead_id IN (SELECT lead_id FROM ${c.slots})`, drill: "fstage=slot" },
+    { key: "couns", label: "Counselled",   cond: `m.lead_id IN (SELECT lead_id FROM ${c.outcome} WHERE status LIKE 'Happening%')`, drill: "fstage=couns" },
+    { key: "ol",    label: "OL released",  cond: `${RESP} AND nullif(m.offer_letter,'') IS NOT NULL`, drill: "fstage=ol" },
+    { key: "sb",    label: "Seat booked",  cond: `${RESP} AND m.seat_booked='Yes'`, drill: "fstage=sb" },
   ];
 }
 
-export function contactFunnel(where = "", prog?: string | null): ContactFunnel[] | null {
-  if (!tableReady("csat_map")) return null;
-  const pw = progWhere(prog, "m");
-  const count = (cond: string) => int(db.prepare(
-    `SELECT COUNT(*) n FROM csat_map m WHERE ${cond}${where}${pw}`
-  ).get());
+/** Contact buckets for one channel. Connected is always a subset of Touched. */
+function buckets(c: Cohort, channel: "human" | "ai") {
+  const p = channel === "human" ? "pt" : "pta";
+  const ai = (col: string) =>
+    `EXISTS (SELECT 1 FROM ai_reach a WHERE a.cohort='${c.aiCohort}' AND a.lead_id=m.lead_id` +
+    ` AND a.${col} IS NOT NULL AND a.${col} < '${c.cut}')`;
+  const touched = channel === "ai"
+    ? ai("first_call")
+    : `m.first_call_at IS NOT NULL AND m.first_call_at < '${c.cut}'`;
+  const conn = channel === "ai"
+    ? ai("first_conn")
+    : c.humanConnExact
+      ? `m.first_conn_at IS NOT NULL AND m.first_conn_at < '${c.cut}'`
+      : "coalesce(m.connected_calls,0) > 0";
+  const rows = [
+    { key: "touched",    label: "Touched",       cond: touched, strong: true, drill: `${p}=touched` },
+    { key: "conn",       label: "Connected",     cond: `${touched} AND (${conn})`, indent: true, drill: `${p}=conn` },
+    { key: "notconn",    label: "Not connected", cond: `${touched} AND NOT (${conn})`, indent: true, drill: `${p}=noconn` },
+    { key: "nottouched", label: "Not touched",
+      cond: channel === "ai" ? `NOT (${touched})` : `m.total_calls IS NOT NULL AND NOT (${touched})`,
+      strong: true, drill: `${p}=never` },
+  ];
+  // Only the human side can have "no row in the CRM dump at all", which is not
+  // the same as a real zero and must never be folded into it.
+  if (channel === "human") {
+    rows.push({ key: "norec", label: "No calling record", cond: "m.total_calls IS NULL", strong: false, drill: `${p}=nodata` });
+  }
+  return rows;
+}
+
+export function contactFunnel(cohortKey: string, where = "", prog?: string | null): ContactFunnel[] | null {
+  const c = COHORTS[cohortKey];
+  if (!c || !tableReady(c.table)) return null;
+  const STAGES = stagesFor(c);
+  const pw = c.table === "csat_map" ? progWhere(prog, "m") : "";
+  const count = (cond: string) => {
+    try {
+      return int(db.prepare(`SELECT COUNT(*) n FROM ${c.table} m WHERE ${cond}${where}${pw}`).get());
+    } catch { return 0; }
+  };
 
   const build = (channel: "human" | "ai", label: string, note: string): ContactFunnel => {
-    const bs = buckets(channel);
-    // Total is every lead, so the column sums are visible against it.
+    const bs = buckets(c, channel);
     const all: ContactRow = {
       key: "total", label: "Total", strong: true,
       cells: STAGES.map((s) => ({ n: count(s.cond), pct: null, drill: s.drill })),
     };
-    const rows = bs.map((b) => {
-      const cells = STAGES.map((s) => ({
+    const rows = bs.map((b) => ({
+      key: b.key, label: b.label, indent: b.indent, strong: b.strong,
+      cells: STAGES.map((s) => ({
         n: count(`(${b.cond}) AND (${s.cond})`),
         pct: null as number | null,
         drill: `${b.drill}&${s.drill}`,
-      }));
-      return { key: b.key, label: b.label, indent: b.indent, strong: b.strong, cells };
-    });
-    // Progressive: each stage against the stage before it, within the same row.
+      })),
+    }));
+    // Progressive: each stage against the stage to its left, along the row.
     for (const r of [all, ...rows]) {
       for (let i = 1; i < r.cells.length; i++) {
         const prev = r.cells[i - 1].n;
@@ -682,13 +709,18 @@ export function contactFunnel(where = "", prog?: string | null): ContactFunnel[]
     return { key: channel, label, note, rows: [all, ...rows] };
   };
 
+  const approx = c.humanConnExact ? "" : " · Connected is not windowed here, see the note below";
   const out = [
-    build("human", "Human calling (CRM)",
-      "contact up to the test day, from the CRM call log"),
-    build("ai", "AI calling (Alchemyst)",
-      "contact up to the test day, from per-call Alchemyst records"),
+    build("human", "Human calling (CRM)", `contact up to the test day, from the CRM call log${approx}`),
+    build("ai", "AI calling (Alchemyst)", "contact up to the test day, from per-call Alchemyst records"),
   ];
   return out[0].rows[0].cells[0].n > 0 ? out : null;
 }
 
-export const CONTACT_STAGE_LABELS = STAGES.map((s) => s.label);
+/** Column labels, and whether this cohort's human Connected is exact. */
+export function contactMeta(cohortKey: string): { labels: string[]; humanConnExact: boolean; cut: string } | null {
+  const c = COHORTS[cohortKey];
+  if (!c) return null;
+  return { labels: stagesFor(c).map((s) => s.label), humanConnExact: c.humanConnExact, cut: c.cut };
+}
+
