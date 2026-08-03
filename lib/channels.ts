@@ -1,4 +1,5 @@
 import db from "./db";
+import { progWhere } from "./queries";
 
 // ---------------------------------------------------------------------------
 // AI calling vs human calling.
@@ -605,6 +606,9 @@ const STAGES: { key: string; label: string; cond: string; drill: string }[] = [
   { key: "lead",  label: "Lead",        cond: "1=1", drill: "fstage=lead" },
   { key: "reg",   label: "Registered",  cond: "m.registered='paid'", drill: "fstage=reg" },
   { key: "test",  label: "Test given",  cond: "m.test_given='Test_Given'", drill: "fstage=test" },
+  { key: "slot",  label: "Slot booked",
+    cond: "m.lead_id IN (SELECT lead_id FROM csat_slots)",
+    drill: "fstage=slot" },
   { key: "couns", label: "Counselled",
     cond: "m.lead_id IN (SELECT lead_id FROM csat_outcome WHERE status LIKE 'Happening%')",
     drill: "fstage=couns" },
@@ -646,10 +650,11 @@ function buckets(channel: "human" | "ai"): { key: string; label: string; cond: s
   ];
 }
 
-export function contactFunnel(where = ""): ContactFunnel[] | null {
+export function contactFunnel(where = "", prog?: string | null): ContactFunnel[] | null {
   if (!tableReady("csat_map")) return null;
+  const pw = progWhere(prog, "m");
   const count = (cond: string) => int(db.prepare(
-    `SELECT COUNT(*) n FROM csat_map m WHERE ${cond}${where}`
+    `SELECT COUNT(*) n FROM csat_map m WHERE ${cond}${where}${pw}`
   ).get());
 
   const build = (channel: "human" | "ai", label: string, note: string): ContactFunnel => {

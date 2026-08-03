@@ -41,7 +41,9 @@ export default async function Overview({ searchParams }: { searchParams: Promise
   const tree = sankeyTree(ctx, round);
   const srcStages = sourceStages(ctx, round);
   // base query for drill-down links (no leading &)
+  // prog rides along so a filtered cell opens the same filtered lead list
   const dq = `${ctx === "CSAT" ? "ctx=CSAT&" : ""}round=${round}`;
+  const dqp = prog ? `${dq}&prog=${prog}` : dq;
   // Coverage views only render where the map actually carries calling data.
   const hasCoverage = coverageAvailable(ctx, round);
   const buckets = hasCoverage ? actionCoverage(ctx, round) : [];
@@ -52,7 +54,7 @@ export default async function Overview({ searchParams }: { searchParams: Promise
   const postTest = hasCoverage ? postTestTable(ctx, round) : [];
   // CSAT-1 only: post-test communication by channel, then turn-up from the panelist
   // form. Requires a turn-up source, which no other round has.
-  const cFunnel = ctx === "CSAT" ? contactFunnel(` AND m.round_tag IN (${ctxRounds(ctx, round).map((r) => `'${r}'`).join(",")})`) : null;
+  const cFunnel = ctx === "CSAT" ? contactFunnel(` AND m.round_tag IN (${ctxRounds(ctx, round).map((r) => `'${r}'`).join(",")})`, prog || null) : null;
   const maxCount = Math.max(1, ...f.rows.filter((r) => r.count !== null).map((r) => r.count as number));
   // The four numbers the CBO tracks — same funnel everywhere, that's the point.
   // NSAT-4's counselling sheet records the booking, not the attendance, so a
@@ -112,7 +114,7 @@ export default async function Overview({ searchParams }: { searchParams: Promise
       <section className="grid mb">
         <div className="card">
           <header><h3>Flow</h3><span className="cap">click a box to expand · click a number to open that student list</span></header>
-          <Sankey root={tree} qs={dq} />
+          <Sankey root={tree} qs={dqp} />
         </div>
       </section>
 
@@ -123,7 +125,7 @@ export default async function Overview({ searchParams }: { searchParams: Promise
             <h3>Stages by source</h3>
             <span className="cap">CRM source category (not form utm) · {round}</span>
           </header>
-          <SourcePie stages={srcStages} legend={sourceLegend(srcStages)} qs={dq} />
+          <SourcePie stages={srcStages} legend={sourceLegend(srcStages)} qs={dqp} />
         </div>
       </section>
 
@@ -136,7 +138,7 @@ export default async function Overview({ searchParams }: { searchParams: Promise
               <h3>Pre test</h3>
               <span className="cap">calling coverage before the exam · every cell opens its list</span>
             </header>
-            <FunnelCallTable rows={preTest} qs={dq} />
+            <FunnelCallTable rows={preTest} qs={dqp} />
           </div>
         </section>
         <section className="grid mb">
@@ -147,10 +149,10 @@ export default async function Overview({ searchParams }: { searchParams: Promise
                 {postTest.length ? `after the exam · ${postTest.map((r) => r.label.toLowerCase()).join(" · ")}` : "after the exam"}
               </span>
             </header>
-            <FunnelCallTable rows={postTest} qs={dq} emptyNote="No post-test data yet." />
+            <FunnelCallTable rows={postTest} qs={dqp} emptyNote="No post-test data yet." />
           </div>
         </section>
-        {cFunnel && <ContactFunnel funnels={cFunnel} qs={dq} />}
+        {cFunnel && <ContactFunnel funnels={cFunnel} qs={dqp} />}
         </>
       )}
 
@@ -163,7 +165,7 @@ export default async function Overview({ searchParams }: { searchParams: Promise
                 <h3>Action coverage</h3>
                 <span className="cap">every lead sits in exactly one bucket · {round}</span>
               </header>
-              <ActionCoverage buckets={buckets} qs={dq} />
+              <ActionCoverage buckets={buckets} qs={dqp} />
             </div>
           </section>
 
@@ -175,7 +177,7 @@ export default async function Overview({ searchParams }: { searchParams: Promise
                   <h3>Untouched &amp; ageing</h3>
                   <span className="cap">not registered and never called, by time since signup</span>
                 </header>
-                <UntouchedAgeing data={untouched} qs={dq} />
+                <UntouchedAgeing data={untouched} qs={dqp} />
               </div>
             </section>
           )}
@@ -187,7 +189,7 @@ export default async function Overview({ searchParams }: { searchParams: Promise
                 <h3>Source × action</h3>
                 <span className="cap">calling coverage per CRM source</span>
               </header>
-              <SourceActionTable rows={srcAct} qs={dq} />
+              <SourceActionTable rows={srcAct} qs={dqp} />
             </div>
           </section>
 
@@ -199,7 +201,7 @@ export default async function Overview({ searchParams }: { searchParams: Promise
                   <h3>Speed to lead</h3>
                   <span className="cap">time from signup to first call</span>
                 </header>
-                <SpeedToLead bands={speed} qs={dq} />
+                <SpeedToLead bands={speed} qs={dqp} />
               </div>
             </section>
           )}

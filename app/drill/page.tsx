@@ -37,7 +37,7 @@ export default async function Drill({ searchParams }: { searchParams: Promise<Re
     stage: one(sp.stage), act: one(sp.act), reg: one(sp.reg), age: one(sp.age), speed: one(sp.speed),
     conn: one(sp.conn), nocouns: one(sp.nocouns), q: one(sp.q), pstage: one(sp.pstage), cprog: one(sp.cprog), sprog: one(sp.sprog),
     id: one(sp.id), name: one(sp.name), phone: one(sp.phone), tg: one(sp.tg), tag: one(sp.tag), reach: one(sp.reach), ch: one(sp.ch), hc: one(sp.hc), ac: one(sp.ac),
-    pt: one(sp.pt), pta: one(sp.pta), fstage: one(sp.fstage),
+    pt: one(sp.pt), pta: one(sp.pta), fstage: one(sp.fstage), prog: one(sp.prog),
   };
   const pageNum = Math.max(1, Number(one(sp.page) ?? 1) || 1);
   const offset = (pageNum - 1) * PAGE_SIZE;
@@ -56,7 +56,7 @@ export default async function Drill({ searchParams }: { searchParams: Promise<Re
       ["stage", p.stage], ["act", p.act], ["reg", p.reg], ["age", p.age], ["speed", p.speed],
       ["conn", p.conn], ["nocouns", p.nocouns], ["q", p.q], ["pstage", p.pstage],
       ["cprog", p.cprog], ["sprog", p.sprog], ["id", p.id], ["name", p.name], ["phone", p.phone], ["tg", p.tg], ["tag", p.tag], ["reach", p.reach], ["ch", p.ch], ["hc", p.hc], ["ac", p.ac],
-      ["pt", p.pt], ["pta", p.pta], ["fstage", p.fstage],
+      ["pt", p.pt], ["pta", p.pta], ["fstage", p.fstage], ["prog", p.prog],
     ];
     for (const [k, v] of single) if (v) q.set(k, v);
     const multi: [string, string[] | null | undefined][] = [
@@ -120,6 +120,7 @@ export default async function Drill({ searchParams }: { searchParams: Promise<Re
             {p.pt && <input type="hidden" name="pt" value={p.pt} />}
             {p.pta && <input type="hidden" name="pta" value={p.pta} />}
             {p.fstage && <input type="hidden" name="fstage" value={p.fstage} />}
+            {p.prog && <input type="hidden" name="prog" value={p.prog} />}
             {p.reach && <input type="hidden" name="reach" value={p.reach} />}
             {p.ch && <input type="hidden" name="ch" value={p.ch} />}
             {p.cprog && <input type="hidden" name="cprog" value={p.cprog} />}

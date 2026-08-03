@@ -573,7 +573,8 @@ export interface DrillParams {
   ac?: string | null;      // AI calling:    dialled | conn | noconn | never
   pt?: string | null;      // contact by test day, person: touched | conn | noconn | never | nodata
   pta?: string | null;     // contact by test day, AI:     touched | conn | noconn | never
-  fstage?: string | null;  // funnel stage, panelist-gated: lead|reg|test|couns|ol|sb
+  fstage?: string | null;  // funnel stage, panelist-gated: lead|reg|test|slot|couns|ol|sb
+  prog?: string | null;    // CSAT programme bucket: BBA|BCA|BTECH|OTHER
 }
 
 // Distinct values for the filter dropdowns on the drill page.
@@ -745,10 +746,15 @@ export function drill(ctx: Ctx, round: string | null | undefined, p: DrillParams
   // Funnel stages for the contact block. Offer letter and seat booked are gated
   // on a panelist response: a CRM outcome on a lead that never went through CSAT
   // counselling is a lead-level result, not a CSAT funnel result.
+  if (p.prog && m.table === "csat_map") {
+    const pw = progWhere(p.prog, "m");
+    if (pw) { w.push(pw.replace(/^ AND /, "")); bits.push(`programme ${p.prog}`); }
+  }
   if (p.fstage && m.table === "csat_map") {
     const HAS_RESP = "m.lead_id IN (SELECT lead_id FROM csat_outcome)";
     if (p.fstage === "reg")   { w.push(`m.${paid}='paid'`); bits.push("registered"); }
     if (p.fstage === "test")  { w.push("m.test_given='Test_Given'"); bits.push("gave the test"); }
+    if (p.fstage === "slot")  { w.push("m.lead_id IN (SELECT lead_id FROM csat_slots)"); bits.push("counselling slot booked"); }
     if (p.fstage === "couns") { w.push("m.lead_id IN (SELECT lead_id FROM csat_outcome WHERE status LIKE 'Happening%')"); bits.push("counselling done"); }
     if (p.fstage === "ol")    { w.push(`${HAS_RESP} AND nullif(m.offer_letter,'') IS NOT NULL`); bits.push("offer letter, panelist verified"); }
     if (p.fstage === "sb")    { w.push(`${HAS_RESP} AND m.seat_booked='Yes'`); bits.push("seat booked, panelist verified"); }
