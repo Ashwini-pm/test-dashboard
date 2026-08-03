@@ -3,7 +3,10 @@
 import Link from "next/link";
 import { useState } from "react";
 import type { SourceAction } from "@/lib/v2";
-import { NO_SRC } from "@/lib/v2";
+
+// The label must be duplicated, not imported. lib/v2 pulls in lib/db -> lib/supabase,
+// which is marked "server-only", so a VALUE import from it in a client component
+// breaks the production build (the type import above is erased and is fine).
 
 // Source x calling coverage. The CRM's taxonomy has a long tail: for CSAT-1,
 // twelve categories hold 38 leads between them, mostly pre-campaign leads
@@ -20,6 +23,7 @@ const pct = (a: number, b: number) => (b > 0 ? Math.round((a / b) * 100) : 0);
 /** A source with fewer leads than this folds into Small quantum. */
 const SMALL_MAX = 10;
 /** Always folded in regardless of size, by request. */
+const NO_SRC = "No CRM source";
 const isSmall = (r: SourceAction) => r.leads < SMALL_MAX || r.src === NO_SRC;
 
 function Row({ r, qs, indent }: { r: SourceAction; qs: string; indent?: boolean }) {
