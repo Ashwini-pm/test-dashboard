@@ -1608,3 +1608,14 @@ table.list tbody tr:hover td {
 .progsel.busy { opacity: .55; }
 /* Ties the combined table to the per-channel tables below it. */
 .cf-recon { margin: 8px 0 18px; font-size: 12.5px; line-height: 1.55; color: var(--muted, #6b7280); }
+
+/* Source x action: the long tail collapses into one expandable row. */
+.sa-group > td { background: var(--soft, #f8fafc); }
+.sa-toggle {
+  display: inline-flex; align-items: center; gap: 7px; font: inherit; font-weight: 600;
+  background: none; border: 0; padding: 0; cursor: pointer; color: inherit;
+}
+.sa-caret { display: inline-block; transition: transform .15s ease; font-size: 11px; opacity: .65; }
+.sa-caret.on { transform: rotate(90deg); }
+.sa-count { font-weight: 400; font-size: 11.5px; color: var(--muted, #6b7280); }
+.sa-child { padding-left: 26px; color: var(--muted, #6b7280); }

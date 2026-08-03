@@ -1,5 +1,5 @@
 import Link from "next/link";
-import type { ActionBucket, Untouched, SourceAction, SpeedBand } from "@/lib/v2";
+import type { ActionBucket, Untouched, SpeedBand } from "@/lib/v2";
 
 // Coverage, not conversion. See lib/v2.ts: calling targets people who did NOT
 // register, so these numbers answer "did we work the lead", never "did calling work".
@@ -73,62 +73,6 @@ export function UntouchedAgeing({ data, qs }: { data: Untouched; qs: string }) {
           </Link>
         )}
       </div>
-    </div>
-  );
-}
-
-export function SourceActionTable({ rows, qs }: { rows: SourceAction[]; qs: string }) {
-  const t = rows.reduce(
-    (a, r) => ({ leads: a.leads + r.leads, called: a.called + r.called, connected: a.connected + r.connected }),
-    { leads: 0, called: 0, connected: 0 }
-  );
-  return (
-    <div className="cv-scroll">
-      <table className="cv-table">
-        <thead>
-          <tr>
-            <th>Source</th>
-            <th className="tnum">Leads</th>
-            <th className="tnum">Called</th>
-            <th className="tnum">%</th>
-            <th className="tnum">Connected</th>
-            <th className="tnum">%</th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((r) => {
-            const cp = pct(r.called, r.leads);
-            return (
-              <tr key={r.src}>
-                <td>{r.src}</td>
-                <td className="tnum"><Link href={`/drill?${qs}&src=${encodeURIComponent(r.src)}`} className="sb-link">{nf(r.leads)}</Link></td>
-                <td className="tnum">
-                  {r.called > 0
-                    ? <Link href={`/drill?${qs}&src=${encodeURIComponent(r.src)}&act=called`} className="sb-link">{nf(r.called)}</Link>
-                    : nf(r.called)}
-                </td>
-                <td className={`tnum ${cp === 0 ? "cv-zero" : ""}`}>{cp}%{cp === 0 ? " ⚠" : ""}</td>
-                <td className="tnum">
-                  {r.connected > 0
-                    ? <Link href={`/drill?${qs}&src=${encodeURIComponent(r.src)}&act=conn`} className="sb-link">{nf(r.connected)}</Link>
-                    : nf(r.connected)}
-                </td>
-                <td className="tnum">{pct(r.connected, r.leads)}%</td>
-              </tr>
-            );
-          })}
-        </tbody>
-        <tfoot>
-          <tr>
-            <td><b>Total</b></td>
-            <td className="tnum"><b>{nf(t.leads)}</b></td>
-            <td className="tnum"><b>{nf(t.called)}</b></td>
-            <td className="tnum"><b>{pct(t.called, t.leads)}%</b></td>
-            <td className="tnum"><b>{nf(t.connected)}</b></td>
-            <td className="tnum"><b>{pct(t.connected, t.leads)}%</b></td>
-          </tr>
-        </tfoot>
-      </table>
     </div>
   );
 }
