@@ -915,26 +915,38 @@ function funnelN3(round: Round = "NSAT-3", src?: Src, prog?: string | null): Fun
     ? c(`SELECT COUNT(*) n FROM csat_map m WHERE m.round_tag IN (${inc})${PW}
           AND nullif(m.offer_letter,'') IS NOT NULL
           AND m.lead_id NOT IN (SELECT lead_id FROM csat_outcome)`)
+    : useN4
+    ? c(`SELECT COUNT(*) n FROM nsat4_map m WHERE nullif(m.offer_letter,'') IS NOT NULL
+          AND m.lead_id NOT IN (SELECT lead_id FROM nsat_outcome)`)
     : 0;
   main(
     "offer_letter",
     "Offer Letter",
     offers,
-    useCsatTest && offersUnverified > 0
+    (useCsatTest || useN4) && offersUnverified > 0
       ? `${offersUnverified} more issued without a panelist response — shown at lead level, not here`
-      : "no offer feed yet"
+      : "no offer feed yet",
+    (offers + offersUnverified) > 0
+      ? `${offers.toLocaleString("en-IN")} counselling · ${offersUnverified.toLocaleString("en-IN")} direct`
+      : undefined
   );
   const seatsUnverified = useCsatTest
     ? c(`SELECT COUNT(*) n FROM csat_map m WHERE m.round_tag IN (${inc})${PW} AND m.seat_booked='Yes'
           AND m.lead_id NOT IN (SELECT lead_id FROM csat_outcome)`)
+    : useN4
+    ? c(`SELECT COUNT(*) n FROM nsat4_map m WHERE m.seat_booked='Yes'
+          AND m.lead_id NOT IN (SELECT lead_id FROM nsat_outcome)`)
     : 0;
   main(
     "seat_payment",
     "Seat Payment",
     seats,
-    useCsatTest && seatsUnverified > 0
+    (useCsatTest || useN4) && seatsUnverified > 0
       ? `${seatsUnverified} seat${seatsUnverified === 1 ? "" : "s"} booked without a panelist response — shown at lead level, not here`
-      : "no seat-payment feed yet"
+      : "no seat-payment feed yet",
+    (seats + seatsUnverified) > 0
+      ? `${seats.toLocaleString("en-IN")} counselling · ${seatsUnverified.toLocaleString("en-IN")} direct`
+      : undefined
   );
   return { base, rows };
 }
