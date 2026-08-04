@@ -69,11 +69,12 @@ export default async function Overview({ searchParams }: { searchParams: Promise
   // panelist form now feeds nsat_outcome, so show Counselled like every other
   // round, and only fall back to Slot booked if that feed is genuinely empty.
   const slotsOnly = ctx === "NSAT" && round === "NSAT-4" && s.held === 0;
-  const kpis: [string, number][] = [
+  const kpis: [string, number, string?][] = [
     ["Leads", s.leads],
     ["Test given", s.appeared],
     slotsOnly ? ["Slot booked", s.slotBooked] : ["Counselled", s.held],
-    ["Seat booked", s.seats],
+    ["Offer letter", s.offers + s.offersNc, `${nf(s.offers)} counselling · ${nf(s.offersNc)} direct`],
+    ["Seat booked", s.seats + s.seatsNc, `${nf(s.seats)} counselling · ${nf(s.seatsNc)} direct`],
   ];
 
   return (
@@ -103,10 +104,11 @@ export default async function Overview({ searchParams }: { searchParams: Promise
 
       {/* Stage KPIs + intent pulse */}
       <section className="grid stage-kpis">
-        {kpis.map(([label, val]) => (
+        {kpis.map(([label, val, sub]) => (
           <div key={label} className="skpi band-none">
             <div className="skpi-top"><span className="skpi-label">{label}</span></div>
             <div className="skpi-val tnum">{nf(val)}</div>
+            {sub && <div className="skpi-sub">{sub}</div>}
           </div>
         ))}
       </section>

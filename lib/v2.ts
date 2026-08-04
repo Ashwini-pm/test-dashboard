@@ -75,6 +75,7 @@ function mapUniverse(ctx: Ctx, round?: string | null): { table: string; where: s
 export interface StageCounts {
   leads: number; paid: number; appeared: number; pass: number; fail: number;
   slotBooked: number; held: number; offers: number; seats: number;
+  offersNc: number; seatsNc: number;
 }
 export function stageCounts(ctx: Ctx, round?: string | null): StageCounts {
   const inc = inClause(ctx, round);
@@ -140,6 +141,18 @@ export function stageCounts(ctx: Ctx, round?: string | null): StageCounts {
       : cs
       ? fromCsat("m.seat_booked = 'Yes' AND m.lead_id IN (SELECT lead_id FROM csat_outcome)")
       : q(jl("payments", " AND x.paid_at >= '2026-07-16'" + COH)),
+    // "no panelist response" = the CRM offer/seat on a lead who never went through
+    // counselling. Shown alongside the counselled ones as x in the x + y split.
+    offersNc: n4
+      ? fromN4("nullif(offer_letter,'') IS NOT NULL AND lead_id NOT IN (SELECT lead_id FROM nsat_outcome)")
+      : cs
+      ? fromCsat("nullif(m.offer_letter,'') IS NOT NULL AND m.lead_id NOT IN (SELECT lead_id FROM csat_outcome)")
+      : 0,
+    seatsNc: n4
+      ? fromN4("seat_booked = 'Yes' AND lead_id NOT IN (SELECT lead_id FROM nsat_outcome)")
+      : cs
+      ? fromCsat("m.seat_booked = 'Yes' AND m.lead_id NOT IN (SELECT lead_id FROM csat_outcome)")
+      : 0,
   };
 }
 
