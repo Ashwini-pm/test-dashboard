@@ -489,9 +489,11 @@ a {
 .frow {
   display: grid;
   grid-template-columns: 160px minmax(0, 1fr) 130px;
-  align-items: center;
+  align-items: start;
   gap: 14px;
 }
+/* keep the label vertically centred against its 32px bar */
+.frow .name { line-height: 32px; }
 .frow .name {
   font-size: 13px;
   color: var(--text-muted);
