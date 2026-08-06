@@ -76,6 +76,8 @@ export interface StageCounts {
   leads: number; paid: number; appeared: number; pass: number; fail: number;
   slotBooked: number; held: number; offers: number; seats: number;
   offersNc: number; seatsNc: number;
+  /** the non-counselled half split by lead vintage: Y old lead, Z direct */
+  offersOld: number; offersZ: number; seatsOld: number; seatsZ: number;
 }
 export function stageCounts(ctx: Ctx, round?: string | null): StageCounts {
   const inc = inClause(ctx, round);
@@ -101,6 +103,33 @@ export function stageCounts(ctx: Ctx, round?: string | null): StageCounts {
   // payments tables, which hold no NSAT-5 rows, so 8 offers and 4 seats read 0.
   const n5 = mu?.table === "cohort_nsat5";
   const fromN5 = (where: string) => q(`SELECT COUNT(*) n FROM cohort_nsat5 WHERE ${where}`);
+  // X + Y + Z: the non-counselled half splits by whether the lead predates this
+  // round's registration window. Vintage comes from lead_vintage, never from the
+  // map's crm_created, which is clipped to the window and always reads "inside".
+  const xyz = (() => {
+    const zero = { offersOld: 0, offersZ: 0, seatsOld: 0, seatsZ: 0 };
+    if (!mu) return zero;
+    const key = ctx === "CSAT" ? "CSAT" : (round ?? "");
+    const win = WINDOW_OPEN[key];
+    if (!win) return zero;
+    const inline = mu.table === "csat_map" || mu.table === "nsat4_map" || mu.table === "cohort_nsat5";
+    const OL = inline ? "nullif(m.offer_letter,'') IS NOT NULL" : "m.lead_id IN (SELECT lead_id FROM offer_letters)";
+    const SB = inline ? "m.seat_booked='Yes'" : "m.lead_id IN (SELECT lead_id FROM payments)";
+    const C = mu.table === "csat_map" ? "m.lead_id IN (SELECT lead_id FROM csat_outcome WHERE status LIKE 'Happening%')"
+      : mu.table === "nsat4_map" || mu.table === "cohort_nsat5"
+        ? "m.lead_id IN (SELECT lead_id FROM nsat_outcome WHERE status LIKE 'Happening%')"
+        : "m.lead_id IN (SELECT lead_id FROM counselling_sessions WHERE status='held')";
+    const V = "(SELECT v.lead_created FROM lead_vintage v WHERE v.lead_id = m.lead_id)";
+    const c2 = (cond: string, older: boolean) => {
+      const cmp = older ? `${V} IS NOT NULL AND ${V} < '${win}'` : `NOT (${V} IS NOT NULL AND ${V} < '${win}')`;
+      try {
+        return Number((db.prepare(
+          `SELECT COUNT(*) n FROM ${mu.table} m WHERE (${cond}) AND NOT (${C}) AND ${cmp}${mu.where}`
+        ).get() as { n?: number } | undefined)?.n ?? 0);
+      } catch { return 0; }
+    };
+    return { offersOld: c2(OL, true), offersZ: c2(OL, false), seatsOld: c2(SB, true), seatsZ: c2(SB, false) };
+  })();
   const fromCsat = (where: string) =>
     q(`SELECT COUNT(*) n FROM csat_map m WHERE ${where}${mu!.where}`);
   return {
@@ -172,6 +201,7 @@ export function stageCounts(ctx: Ctx, round?: string | null): StageCounts {
       : n5
       ? fromN5("seat_booked = 'Yes'")
       : q(jl("payments", NOT_COH)),
+    ...xyz,
   };
 }
 
@@ -1386,22 +1416,38 @@ export function sankeyTree(ctx: Ctx, round?: string | null): SNode {
   // block uses, so a box and that table open the identical list. Only set where
   // the round is map-backed; otherwise left unclickable rather than linking to a
   // list that would not match.
+  //
+  // The Offer letter box opens into X + Y + Z, the same three buckets the tiles and
+  // the "Where the offers and seats came from" block use:
+  //   X through counselling · Y old lead (predates the round) · Z direct
+  // These three DO sum to the offer-letter box exactly, so only the offer box
+  // itself is a cross-cut; its own children are a clean partition.
+  const vintOld = mu
+    ? (() => {
+        const key = ctx === "CSAT" ? "CSAT" : (round ?? "");
+        const win = WINDOW_OPEN[key];
+        if (!win) return new Set<string>();
+        return ids(`SELECT m.lead_id FROM ${mu.table} m
+                     WHERE (SELECT v.lead_created FROM lead_vintage v WHERE v.lead_id = m.lead_id) < '${win}'${mu.where}`);
+      })()
+    : new Set<string>();
   const outcomeChild = (stageSet: Set<string>, stageKey: string): SNode[] => {
     const o = inter(stageSet, olAll);
     if (!o.size) return [];
-    const b = inter(o, seatAll);
-    const dr = (h: string) => (mu ? `fstage=${stageKey}&has=${h}` : undefined);
+    const dr = (extra: string) => (mu ? `fstage=${stageKey}&${extra}` : undefined);
+    const x = inter(o, held);
+    const rest = diff(o, held);
+    const y = inter(rest, vintOld);
+    const z = diff(rest, vintOld);
     const kids: SNode[] = [];
-    if (b.size) {
-      kids.push({ id: `${stageKey}:x_sb`, label: "Seat booked", n: b.size,
-                  tone: "good", cross: true, drill: dr("sb") });
-    }
-    if (o.size - b.size) {
-      kids.push({ id: `${stageKey}:x_open`, label: "Offer open", n: o.size - b.size,
-                  tone: "warn", cross: true, drill: dr("olopen") });
-    }
+    if (x.size) kids.push({ id: `${stageKey}:x_c`, label: "Through counselling", n: x.size,
+                            tone: "good", cross: true, drill: dr("has=ol&xyz=couns") });
+    if (y.size) kids.push({ id: `${stageKey}:x_y`, label: "Old lead", n: y.size,
+                            tone: "warn", cross: true, drill: dr("has=ol&xyz=old") });
+    if (z.size) kids.push({ id: `${stageKey}:x_z`, label: "Direct", n: z.size,
+                            tone: "info", cross: true, drill: dr("has=ol&xyz=direct") });
     return [{ id: `${stageKey}:x_ol`, label: "Offer letter", n: o.size, tone: "info",
-              cross: true, drill: dr("ol"), ...(kids.length ? { children: kids } : {}) }];
+              cross: true, drill: dr("has=ol"), ...(kids.length ? { children: kids } : {}) }];
   };
 
   const seatNode = node("seat", "Seat booked", sSeat.size, "good");

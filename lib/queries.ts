@@ -919,6 +919,37 @@ function funnelN3(round: Round = "NSAT-3", src?: Src, prog?: string | null): Fun
           : `slots ran from ${firstSlot}${useCsatTest || useN4 ? " · awaiting panelist responses" : " · attendance is not recorded"}`)
       : "counselling not started yet"
   );
+  // Y of X + Y + Z: of the non-counselled outcomes, how many sit on a lead that
+  // existed before this round's registration opened. lead_vintage holds the true
+  // creation date; the maps' own crm_created is clipped to the window.
+  const WIN: Record<string, string> = {
+    "NSAT-2": "2026-05-11", "NSAT-3": "2026-06-15", "NSAT-4": "2026-07-13",
+    "NSAT-5": "2026-07-28", CSAT: "2026-07-20", "CSAT-BBA": "2026-07-20",
+    "CSAT-BCA": "2026-07-20", "CSAT-COMB": "2026-07-20",
+  };
+  const oldCount = (kind: "ol" | "sb"): number => {
+    const win = WIN[round];
+    if (!win) return 0;
+    const tbl = useCsatTest ? "csat_map" : useN4 ? "nsat4_map" : useN5 ? "cohort_nsat5" : null;
+    const V = "(SELECT v.lead_created FROM lead_vintage v WHERE v.lead_id = m.lead_id)";
+    const older = `${V} IS NOT NULL AND ${V} < '${win}'`;
+    if (tbl) {
+      const OL = kind === "ol" ? "nullif(m.offer_letter,'') IS NOT NULL" : "m.seat_booked='Yes'";
+      const C = tbl === "csat_map"
+        ? "m.lead_id IN (SELECT lead_id FROM csat_outcome WHERE status LIKE 'Happening%')"
+        : "m.lead_id IN (SELECT lead_id FROM nsat_outcome WHERE status LIKE 'Happening%')";
+      const rt = useCsatTest ? ` AND m.round_tag IN (${inc})` : "";
+      return c(`SELECT COUNT(*) n FROM ${tbl} m WHERE ${OL} AND NOT (${C}) AND ${older}${rt}`);
+    }
+    // NSAT-2 / NSAT-3: outcomes live in the base tables
+    const src = kind === "ol" ? "offer_letters" : "payments";
+    return c(`SELECT COUNT(*) n FROM leads m JOIN ${src} x ON x.lead_id = m.lead_id
+               WHERE m.nsat_round IN (${inc})
+                 AND m.lead_id NOT IN (SELECT lead_id FROM counselling_sessions WHERE status='held')
+                 AND ${older}`);
+  };
+  const olOld = oldCount("ol");
+  const sbOld = oldCount("sb");
   const offersUnverified = useCsatTest
     ? c(`SELECT COUNT(*) n FROM csat_map m WHERE m.round_tag IN (${inc})${PW}
           AND nullif(m.offer_letter,'') IS NOT NULL
@@ -942,7 +973,7 @@ function funnelN3(round: Round = "NSAT-3", src?: Src, prog?: string | null): Fun
       ? `${offersUnverified} more issued without a panelist response — shown at lead level, not here`
       : "no offer feed yet",
     (offers + offersUnverified) > 0
-      ? `${offers.toLocaleString("en-IN")} counselling · ${offersUnverified.toLocaleString("en-IN")} direct`
+      ? `${offers.toLocaleString("en-IN")} counselling · ${olOld.toLocaleString("en-IN")} old lead · ${(offersUnverified - olOld).toLocaleString("en-IN")} direct`
       : undefined
   );
   const seatsUnverified = useCsatTest
@@ -962,7 +993,7 @@ function funnelN3(round: Round = "NSAT-3", src?: Src, prog?: string | null): Fun
       ? `${seatsUnverified} seat${seatsUnverified === 1 ? "" : "s"} booked without a panelist response — shown at lead level, not here`
       : "no seat-payment feed yet",
     (seats + seatsUnverified) > 0
-      ? `${seats.toLocaleString("en-IN")} counselling · ${seatsUnverified.toLocaleString("en-IN")} direct`
+      ? `${seats.toLocaleString("en-IN")} counselling · ${sbOld.toLocaleString("en-IN")} old lead · ${(seatsUnverified - sbOld).toLocaleString("en-IN")} direct`
       : undefined
   );
   return { base, rows };

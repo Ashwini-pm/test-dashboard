@@ -80,8 +80,13 @@ export default async function Overview({ searchParams }: { searchParams: Promise
     ["Leads", s.leads],
     ["Test given", s.appeared],
     slotsOnly ? ["Slot booked", s.slotBooked] : ["Counselled", s.held],
-    ["Offer letter", s.offers + s.offersNc, `${nf(s.offers)} counselling · ${nf(s.offersNc)} direct`],
-    ["Seat booked", s.seats + s.seatsNc, `${nf(s.seats)} counselling · ${nf(s.seatsNc)} direct`],
+    // X + Y + Z. "old" is a lead that already existed before this round's
+    // registration opened, so the campaign did not create it whatever it converted
+    // into later. Old and direct sit beside counselling, never subtracted from it.
+    ["Offer letter", s.offers + s.offersNc,
+      `${nf(s.offers)} counselling · ${nf(s.offersOld)} old lead · ${nf(s.offersZ)} direct`],
+    ["Seat booked", s.seats + s.seatsNc,
+      `${nf(s.seats)} counselling · ${nf(s.seatsOld)} old lead · ${nf(s.seatsZ)} direct`],
   ];
 
   return (
