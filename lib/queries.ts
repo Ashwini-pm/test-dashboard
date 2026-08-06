@@ -941,12 +941,15 @@ function funnelN3(round: Round = "NSAT-3", src?: Src, prog?: string | null): Fun
       const rt = useCsatTest ? ` AND m.round_tag IN (${inc})` : "";
       return c(`SELECT COUNT(*) n FROM ${tbl} m WHERE ${OL} AND NOT (${C}) AND ${older}${rt}`);
     }
-    // NSAT-2 / NSAT-3: outcomes live in the base tables
+    // NSAT-2 / NSAT-3: outcomes live in the base tables, and leads.lead_id is
+    // "NSAT-3-C<crm id>" rather than the CRM id, so lead_vintage joins on
+    // leads.student_id. Joining on lead_id matched nothing and Y read 0.
     const src = kind === "ol" ? "offer_letters" : "payments";
-    return c(`SELECT COUNT(*) n FROM leads m JOIN ${src} x ON x.lead_id = m.lead_id
+    const olderS = "(SELECT v.lead_created FROM lead_vintage v WHERE v.lead_id = m.student_id) < '" + win + "'";
+    return c(`SELECT COUNT(DISTINCT m.lead_id) n FROM leads m JOIN ${src} x ON x.lead_id = m.lead_id
                WHERE m.nsat_round IN (${inc})
                  AND m.lead_id NOT IN (SELECT lead_id FROM counselling_sessions WHERE status='held')
-                 AND ${older}`);
+                 AND ${olderS}`);
   };
   const olOld = oldCount("ol");
   const sbOld = oldCount("sb");

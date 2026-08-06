@@ -108,10 +108,33 @@ export function stageCounts(ctx: Ctx, round?: string | null): StageCounts {
   // map's crm_created, which is clipped to the window and always reads "inside".
   const xyz = (() => {
     const zero = { offersOld: 0, offersZ: 0, seatsOld: 0, seatsZ: 0 };
-    if (!mu) return zero;
     const key = ctx === "CSAT" ? "CSAT" : (round ?? "");
     const win = WINDOW_OPEN[key];
     if (!win) return zero;
+    // NSAT-2 / NSAT-3 have no map in mapUniverse, so they come off the base tables.
+    // Their leads.lead_id is "NSAT-3-C<crm id>", NOT the CRM id, so lead_vintage
+    // must be joined on leads.student_id, which holds the real one. Joining on
+    // lead_id silently matched nothing and both Y and Z read 0.
+    if (!mu) {
+      const V2 = "(SELECT v.lead_created FROM lead_vintage v WHERE v.lead_id = l.student_id)";
+      const HELD2 = "l.lead_id IN (SELECT lead_id FROM counselling_sessions WHERE status='held')";
+      const b2 = (src: string, older: boolean) => {
+        const cmp = older
+          ? `${V2} IS NOT NULL AND ${V2} < '${win}'`
+          : `NOT (${V2} IS NOT NULL AND ${V2} < '${win}')`;
+        try {
+          return Number((db.prepare(
+            `SELECT COUNT(DISTINCT l.lead_id) n FROM leads l
+               JOIN ${src} x ON x.lead_id = l.lead_id
+              WHERE l.nsat_round IN (${inc}) AND NOT (${HELD2}) AND ${cmp}`
+          ).get() as { n?: number } | undefined)?.n ?? 0);
+        } catch { return 0; }
+      };
+      return {
+        offersOld: b2("offer_letters", true), offersZ: b2("offer_letters", false),
+        seatsOld: b2("payments", true), seatsZ: b2("payments", false),
+      };
+    }
     const inline = mu.table === "csat_map" || mu.table === "nsat4_map" || mu.table === "cohort_nsat5";
     const OL = inline ? "nullif(m.offer_letter,'') IS NOT NULL" : "m.lead_id IN (SELECT lead_id FROM offer_letters)";
     const SB = inline ? "m.seat_booked='Yes'" : "m.lead_id IN (SELECT lead_id FROM payments)";
@@ -1422,15 +1445,23 @@ export function sankeyTree(ctx: Ctx, round?: string | null): SNode {
   //   X through counselling · Y old lead (predates the round) · Z direct
   // These three DO sum to the offer-letter box exactly, so only the offer box
   // itself is a cross-cut; its own children are a clean partition.
-  const vintOld = mu
-    ? (() => {
-        const key = ctx === "CSAT" ? "CSAT" : (round ?? "");
-        const win = WINDOW_OPEN[key];
-        if (!win) return new Set<string>();
-        return ids(`SELECT m.lead_id FROM ${mu.table} m
-                     WHERE (SELECT v.lead_created FROM lead_vintage v WHERE v.lead_id = m.lead_id) < '${win}'${mu.where}`);
-      })()
-    : new Set<string>();
+  const vintOld = (() => {
+    const key = ctx === "CSAT" ? "CSAT" : (round ?? "");
+    const win = WINDOW_OPEN[key];
+    if (!win) return new Set<string>();
+    // The maps key on the CRM id, so lead_vintage joins directly. NSAT-2 / NSAT-3
+    // key on "NSAT-3-C<crm id>", with the real id in leads.student_id, and their
+    // Sankey sets use that prefixed id — so go through leads and return lead_id.
+    const inlineMap = mu && (mu.table === "csat_map" || mu.table === "nsat4_map" || mu.table === "cohort_nsat5");
+    try {
+      return inlineMap
+        ? ids(`SELECT m.lead_id FROM ${mu!.table} m
+                WHERE (SELECT v.lead_created FROM lead_vintage v WHERE v.lead_id = m.lead_id) < '${win}'${mu!.where}`)
+        : ids(`SELECT l.lead_id FROM leads l
+                WHERE l.nsat_round IN (${inClause(ctx, round)})
+                  AND (SELECT v.lead_created FROM lead_vintage v WHERE v.lead_id = l.student_id) < '${win}'`);
+    } catch { return new Set<string>(); }
+  })();
   const outcomeChild = (stageSet: Set<string>, stageKey: string): SNode[] => {
     const o = inter(stageSet, olAll);
     if (!o.size) return [];
