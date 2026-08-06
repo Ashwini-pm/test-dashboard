@@ -1234,6 +1234,13 @@ export interface SNode {
   // rather than linking to a list that would not match the number.
   drill?: string;
   children?: SNode[];
+  /**
+   * Cross-cut, not flow. An offer letter or seat is not a step in the funnel: the
+   * students holding one are already inside the sibling boxes. So a parent's
+   * children do NOT sum to it once these are present, by design, and the coverage
+   * audit skips them rather than reporting a contradiction.
+   */
+  cross?: boolean;
 }
 
 export function sankeyTree(ctx: Ctx, round?: string | null): SNode {
@@ -1347,6 +1354,38 @@ export function sankeyTree(ctx: Ctx, round?: string | null): SNode {
   const node = (id: string, label: string, n: number, tone: SNode["tone"], children?: SNode[], drill?: string): SNode =>
     ({ id, label, n, tone, ...(drill ? { drill } : {}), ...(children && children.length ? { children } : {}) });
 
+  // Offer letter / seat booked as a CROSS-CUT child on each stage box, by request.
+  //
+  // These are not steps in the flow: the students in them are already inside the
+  // sibling boxes, so a stage's children no longer sum to it once this is present.
+  // That is intended, marked with cross:true, and the coverage audit skips them so
+  // the sum check stays a real contradiction test rather than crying wolf here.
+  //
+  // Seat booked nests inside Offer letter because every seat has an offer letter
+  // (42 of 42 on NSAT-4), so that pair IS a true subset relationship.
+  //
+  // Drills use fstage= plus has=, the same params the Offers-and-seats-by-stage
+  // block uses, so a box and that table open the identical list. Only set where
+  // the round is map-backed; otherwise left unclickable rather than linking to a
+  // list that would not match.
+  const outcomeChild = (stageSet: Set<string>, stageKey: string): SNode[] => {
+    const o = inter(stageSet, olAll);
+    if (!o.size) return [];
+    const b = inter(o, seatAll);
+    const dr = (h: string) => (mu ? `fstage=${stageKey}&has=${h}` : undefined);
+    const kids: SNode[] = [];
+    if (b.size) {
+      kids.push({ id: `${stageKey}:x_sb`, label: "Seat booked", n: b.size,
+                  tone: "good", cross: true, drill: dr("sb") });
+    }
+    if (o.size - b.size) {
+      kids.push({ id: `${stageKey}:x_open`, label: "Offer open", n: o.size - b.size,
+                  tone: "warn", cross: true, drill: dr("olopen") });
+    }
+    return [{ id: `${stageKey}:x_ol`, label: "Offer letter", n: o.size, tone: "info",
+              cross: true, drill: dr("ol"), ...(kids.length ? { children: kids } : {}) }];
+  };
+
   const seatNode = node("seat", "Seat booked", sSeat.size, "good");
   // Counselled splits by the offer's life: booked, live (day 0-2), expiring
   // (day 3-4), expired (5+ days), or no offer at all.
@@ -1370,6 +1409,7 @@ export function sankeyTree(ctx: Ctx, round?: string | null): SNode {
     // derived from sPass and can include leads with no slot, which made the box
     // read 80 while its own children summed to 88.
     node("slot_no_held", "Counselling pending", diff(sSlot, held).size, "warn", comms(diff(sSlot, held), "slot_no_held")),
+    ...outcomeChild(sSlot, "slot"),
   ]);
   const passNode = node("pass", "Passed", sPass.size, "good", [
     slotNode,
@@ -1389,6 +1429,7 @@ export function sankeyTree(ctx: Ctx, round?: string | null): SNode {
       node("slot_pending", "Counselling pending", diff(csatSlot, held).size, "warn", comms(diff(csatSlot, held), "csat_slot_pending")),
     ]),
     node("no_slot", "No slot booked", diff(sApp, slotAny).size, "bad", comms(diff(sApp, slotAny), "csat_no_slot")),
+    ...outcomeChild(sApp, "test"),
   ]);
   // Slot bookers who never gave the test: 1 today. Without this branch they vanish
   // from the diagram and Slot booked reads one less than the funnel.
@@ -1403,6 +1444,7 @@ export function sankeyTree(ctx: Ctx, round?: string | null): SNode {
   const testNode = node("test", "Test given", sApp.size, "good", [
     passNode,
     node("fail", "Failed", sFail.size, "warn", comms(sFail, "fail")),
+    ...outcomeChild(sApp, "test"),
     // sat the test but no result row yet, so the box still contains its children
     ...(sPending.size > 0
       ? [node("result_pending", "Result pending", sPending.size, "warn", comms(sPending, "result_pending"))]
@@ -1414,10 +1456,12 @@ export function sankeyTree(ctx: Ctx, round?: string | null): SNode {
       "reg_no_test", "Did not give test", sReg.size - sApp.size, "bad",
       isCsat ? noTestChildren : comms(diff(sReg, appeared), "reg_no_test", "reg=paid"),
     ),
+    ...outcomeChild(sReg, "reg"),
   ], useCsatMap ? "reg=paid" : undefined);
   return node("lead", "Leads", all.size, "neutral", [
     regNode,
     node("no_reg", "Not registered", all.size - sReg.size, "bad", comms(diff(all, reg), "no_reg", "reg=unpaid"), useCsatMap ? "reg=unpaid" : undefined),
+    ...outcomeChild(all, "lead"),
   ], useCsatMap ? "stage=lead" : undefined);
 }
 

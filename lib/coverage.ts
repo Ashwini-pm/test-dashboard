@@ -281,7 +281,12 @@ export function auditBlocks(): BlockIssue[] {
       for (const n of flat) {
         const kids = n.children ?? [];
         if (!kids.length) continue;
-        const sum = kids.reduce((t, c) => t + c.n, 0);
+        // cross-cut boxes (offer letter / seat booked) are not steps in the flow:
+        // the students in them are already inside their siblings. Excluded from the
+        // sum so the check stays a real contradiction test.
+        const flow = kids.filter((c) => !c.cross);
+        if (!flow.length) continue;
+        const sum = flow.reduce((t, c) => t + c.n, 0);
         if (sum !== n.n) {
           raw.push({
             round: `${r.ctx} / ${r.round}`,

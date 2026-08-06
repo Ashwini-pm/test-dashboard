@@ -84,7 +84,10 @@ export default function Sankey({ root, qs }: { root: SNode; qs?: string }) {
           const mx = (x1 + x2) / 2;
           return (
             <path key={`l-${p.node.id}`} className="sk-link" d={`M ${x1} ${y1} C ${mx} ${y1}, ${mx} ${y2}, ${x2} ${y2}`}
-              stroke={TONE[p.node.tone]} strokeWidth={w} fill="none" strokeLinecap="round" />
+              stroke={TONE[p.node.tone]} strokeWidth={w} fill="none" strokeLinecap="round"
+              // cross-cut boxes are not a step in the flow, so their ribbon is dashed
+              strokeDasharray={p.node.cross ? "5 4" : undefined}
+              opacity={p.node.cross ? 0.55 : undefined} />
           );
         })}
         {/* nodes */}
@@ -95,7 +98,8 @@ export default function Sankey({ root, qs }: { root: SNode; qs?: string }) {
           return (
             <g key={p.node.id} className="sk-node" onClick={() => toggle(p.node)} style={{ cursor: expandable ? "pointer" : "default" }}>
               <rect x={x} y={p.y} width={NODE_W} height={p.h} rx={Math.min(10, p.h / 3)}
-                fill="#fff" stroke={TONE[p.node.tone]} strokeWidth={1.6} />
+                fill="#fff" stroke={TONE[p.node.tone]} strokeWidth={1.6}
+                strokeDasharray={p.node.cross ? "4 3" : undefined} />
               <rect x={x} y={p.y} width={5} height={p.h} rx={2.5} fill={TONE[p.node.tone]} />
               {/* Heights are now proportional, so a small box has no room for two
                   lines: label and number share one line and the number right-aligns. */}
@@ -133,7 +137,10 @@ export default function Sankey({ root, qs }: { root: SNode; qs?: string }) {
           );
         })}
       </svg>
-      <div className="cap" style={{ marginTop: 6 }}>click a box to split it further · click the number to open that student list</div>
+      <div className="cap" style={{ marginTop: 6 }}>
+        click a box to split it further · click the number to open that student list
+        {" · "}<span style={{ opacity: .75 }}>dashed boxes are offers and seats: a cross-cut, so they overlap their siblings rather than adding up to the parent</span>
+      </div>
     </div>
   );
 }
