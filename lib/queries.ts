@@ -723,6 +723,8 @@ function funnelN3(round: Round = "NSAT-3", src?: Src, prog?: string | null): Fun
     : useN4
     ? c(`SELECT COUNT(*) n FROM nsat4_map m WHERE nullif(m.offer_letter,'') IS NOT NULL
           AND m.lead_id IN (SELECT lead_id FROM nsat_outcome)`)
+    : useN5
+    ? 0   // no counselling feed for NSAT-5 yet, so nothing is counselling-earned
     : c(`SELECT COUNT(*) n FROM offer_letters x ${jl(" AND x.lead_id IN (SELECT lead_id FROM counselling_sessions WHERE status IN ('held','no_show','reschedule'))")}`);
   // Seat = counselled (held) students who booked; pre-booked re-testers live on the Test card
   // Seats read the map's own seat_booked column. Note the map's seat data is
@@ -740,6 +742,8 @@ function funnelN3(round: Round = "NSAT-3", src?: Src, prog?: string | null): Fun
     : useN4
     ? c(`SELECT COUNT(*) n FROM nsat4_map m WHERE m.seat_booked='Yes'
           AND m.lead_id IN (SELECT lead_id FROM nsat_outcome)`)
+    : useN5
+    ? 0
     // the paid_at >= 2026-07-16 filter that used to be here was written for NSAT-4
     // and dropped 39 of NSAT-3's 83 seats; the counselling gate is the real filter
     : c(`SELECT COUNT(*) n FROM payments x ${jl(COH)}`);
@@ -922,6 +926,10 @@ function funnelN3(round: Round = "NSAT-3", src?: Src, prog?: string | null): Fun
     : useN4
     ? c(`SELECT COUNT(*) n FROM nsat4_map m WHERE nullif(m.offer_letter,'') IS NOT NULL
           AND m.lead_id NOT IN (SELECT lead_id FROM nsat_outcome)`)
+    // NSAT-5 keeps offers on its own map, and has no counselling at all yet, so
+    // every one of them is direct.
+    : useN5
+    ? c(`SELECT COUNT(*) n FROM cohort_nsat5 WHERE nullif(offer_letter,'') IS NOT NULL`)
     // NSAT-2 / NSAT-3 have no panelist feed: counselling_sessions membership is the
     // equivalent. Previously 0, so their funnels read "0 direct" and silently
     // dropped 80 offer letters.
@@ -943,6 +951,8 @@ function funnelN3(round: Round = "NSAT-3", src?: Src, prog?: string | null): Fun
     : useN4
     ? c(`SELECT COUNT(*) n FROM nsat4_map m WHERE m.seat_booked='Yes'
           AND m.lead_id NOT IN (SELECT lead_id FROM nsat_outcome)`)
+    : useN5
+    ? c(`SELECT COUNT(*) n FROM cohort_nsat5 WHERE seat_booked='Yes'`)
     : c(`SELECT COUNT(*) n FROM payments x ${jl(NOT_COH)}`);
   main(
     "seat_payment",
