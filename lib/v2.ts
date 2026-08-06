@@ -634,6 +634,7 @@ export interface DrillParams {
   cb?: string | null;      // combined by test day: any | both | hu | ai | noconn | never | nodata
   fstage?: string | null;  // funnel stage, panelist-gated: lead|reg|test|slot|couns|ol|sb
   prog?: string | null;    // CSAT programme bucket: BBA|BCA|BTECH|OTHER
+  has?: string | null;     // outcome held: ol | sb | olopen (offer issued, seat not taken)
 }
 
 // Distinct values for the filter dropdowns on the drill page.
@@ -847,6 +848,17 @@ export function drill(ctx: Ctx, round: string | null | undefined, p: DrillParams
   if (p.prog && m.table === "csat_map") {
     const pw = progWhere(p.prog, "m");
     if (pw) { w.push(pw.replace(/^ AND /, "")); bits.push(`programme ${p.prog}`); }
+  }
+  // Offers-and-seats-by-stage cells. Inline on the maps, base tables for NSAT-3.
+  if (p.has) {
+    const inline = m.table === "csat_map" || m.table === "nsat4_map" || m.table === "cohort_nsat5";
+    const OL = inline ? "nullif(m.offer_letter,'') IS NOT NULL"
+                      : "m.lead_id IN (SELECT lead_id FROM offer_letters)";
+    const SB = inline ? "m.seat_booked='Yes'"
+                      : "m.lead_id IN (SELECT lead_id FROM payments)";
+    if (p.has === "ol")     { w.push(OL); bits.push("has an offer letter"); }
+    if (p.has === "sb")     { w.push(SB); bits.push("seat booked"); }
+    if (p.has === "olopen") { w.push(`${OL} AND NOT (${SB})`); bits.push("offer issued, seat not taken"); }
   }
   if (p.fstage && (m.table === "csat_map" || m.table === "nsat4_map")) {
     const isC = m.table === "csat_map";
@@ -1427,4 +1439,89 @@ export function progOptions(ctx: Ctx, round?: string | null):
     if (n > 0) out.push({ value: v, label: LABEL[v] ?? v, n });
   }
   return out;
+}
+
+// ---------------------------------------------------------------------------
+// Offers and seats by stage.
+//
+// Rows are NESTED COHORTS, not a flow: each one is "students who reached this
+// stage and already hold an offer letter". So the numbers do not decrease
+// monotonically and must not be read as drop-off. Counselled shows 36 offers
+// against Slot booked's 35 because one counselled student has no slot booking.
+//
+// This deliberately does NOT go in the Sankey. A Sankey box has to contain its
+// children exactly, and offers and seats cut across the flow rather than sitting
+// in it: the 79 leads holding an offer are already inside Registered, Test given
+// and the rest. Hanging them off stage boxes would make children exceed parents,
+// which is what broke that diagram twice before.
+//
+// Every seat has an offer letter (42 of 42 on NSAT-4), so SB is a strict subset
+// of OL and "OL still open" = OL - SB is exact.
+// ---------------------------------------------------------------------------
+
+export interface OutcomeStageRow {
+  key: string;
+  label: string;
+  students: number;
+  ol: number;
+  sb: number;
+  /** offers issued where the seat has not been taken — OL minus SB */
+  open: number;
+  /** drill filter for the stage itself */
+  drill: string;
+}
+
+export function outcomeByStage(ctx: Ctx, round?: string | null): OutcomeStageRow[] {
+  const m = mapTableFor(ctx, round);
+  if (!m) return [];
+  const paid = paidColFor(m.table);
+  const isCsat = m.table === "csat_map";
+  const isN4 = m.table === "nsat4_map";
+  const isN5 = m.table === "cohort_nsat5";
+  // Only the maps carry offer_letter / seat_booked inline. NSAT-3's outcomes live
+  // in the base offer_letters / payments tables, so it needs its own source.
+  const inline = isCsat || isN4 || isN5;
+
+  const test = isCsat ? "m.test_given='Test_Given'"
+    : isN5 ? null
+    : isN4 ? "nullif(m.test_result,'') IS NOT NULL"
+    : "m.lead_id IN (SELECT lead_id FROM test_results WHERE appeared=1)";
+  const slots = isCsat ? "csat_slots" : isN4 ? "nsat4_slots" : null;
+  const outcome = isCsat ? "csat_outcome" : isN4 ? "nsat_outcome" : null;
+
+  const defs: [string, string, string | null][] = [
+    ["lead",  "Lead",        "1=1"],
+    ["reg",   "Registered",  `m.${paid}='paid'`],
+    ["test",  "Test given",  test],
+    ["slot",  "Slot booked", slots ? `m.lead_id IN (SELECT lead_id FROM ${slots})`
+      : "m.lead_id IN (SELECT lead_id FROM counselling_sessions WHERE scheduled_at IS NOT NULL)"],
+    ["couns", "Counselled",  outcome
+      ? `m.lead_id IN (SELECT lead_id FROM ${outcome} WHERE status LIKE 'Happening%')`
+      : "m.lead_id IN (SELECT lead_id FROM counselling_sessions WHERE status='held')"],
+  ];
+
+  const OL = inline ? "nullif(m.offer_letter,'') IS NOT NULL"
+    : "m.lead_id IN (SELECT lead_id FROM offer_letters)";
+  const SB = inline ? "m.seat_booked='Yes'"
+    : "m.lead_id IN (SELECT lead_id FROM payments)";
+
+  const n = (where: string) => {
+    try {
+      return Number((db.prepare(
+        `SELECT COUNT(*) c FROM ${m.table} m WHERE ${where}${m.where}`
+      ).get() as { c?: number } | undefined)?.c ?? 0);
+    } catch { return 0; }
+  };
+
+  const out: OutcomeStageRow[] = [];
+  for (const [key, label, cond] of defs) {
+    if (!cond) continue;                     // stage does not exist for this round
+    const students = n(cond);
+    if (students === 0 && key !== "lead") continue;
+    const ol = n(`(${cond}) AND (${OL})`);
+    const sb = n(`(${cond}) AND (${SB})`);
+    out.push({ key, label, students, ol, sb, open: ol - sb, drill: `fstage=${key}` });
+  }
+  // Nothing to say if the round has no offers at all.
+  return out.some((r) => r.ol > 0) ? out : [];
 }

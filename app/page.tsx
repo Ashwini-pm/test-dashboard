@@ -3,12 +3,13 @@ import { ensureFresh, loadState } from "@/lib/db";
 import {
   parseCtx, stageCounts, roundOptions, defaultRound, ctxRounds, sankeyTree, sourceStages, sourceLegend,
   coverageAvailable, actionCoverage, untouchedAgeing, sourceAction, speedToLead,
-  preTestTable, postTestTable, progOptions,
+  preTestTable, postTestTable, progOptions, outcomeByStage,
 } from "@/lib/v2";
 import Sankey from "@/components/Sankey";
 import SourcePie from "@/components/SourcePie";
 import FunnelCallTable from "@/components/FunnelCallTable";
 import ContactFunnel from "@/components/ContactFunnel";
+import OutcomeByStage from "@/components/OutcomeByStage";
 import { contactFunnel, contactMeta } from "@/lib/channels";
 import { ActionCoverage, UntouchedAgeing, SpeedToLead } from "@/components/CoverageViews";
 import SourceActionTable from "@/components/SourceActionTable";
@@ -61,6 +62,9 @@ export default async function Overview({ searchParams }: { searchParams: Promise
   const cMeta = cKey ? contactMeta(cKey) : null;
   const cWhere = ctx === "CSAT" ? ` AND m.round_tag IN (${ctxRounds(ctx, round).map((r) => `'${r}'`).join(",")})` : "";
   const cFunnel = cKey ? contactFunnel(cKey, cWhere, prog || undefined) : null;
+  // offers and seats at every stage: a cross-cut, not a flow, so it sits as its
+  // own block rather than in the Sankey
+  const outcomes = outcomeByStage(ctx, round);
   const maxCount = Math.max(1, ...f.rows.filter((r) => r.count !== null).map((r) => r.count as number));
   // The four numbers the CBO tracks — same funnel everywhere, that's the point.
   // NSAT-4's counselling sheet records the booking, not the attendance, so a
@@ -163,6 +167,8 @@ export default async function Overview({ searchParams }: { searchParams: Promise
             <FunnelCallTable rows={postTest} qs={dqp} emptyNote="No post-test data yet." />
           </div>
         </section>
+        {outcomes.length > 0 && <OutcomeByStage rows={outcomes} qs={dqp} />}
+
         {cFunnel && cMeta && (
           <ContactFunnel
             funnels={cFunnel}

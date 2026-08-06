@@ -29,7 +29,7 @@ export async function GET(req: Request) {
     src: many(g("src")), camp: many(g("camp")), med: many(g("med")), origin: many(g("origin")), couns: many(g("couns")),
     stage: one(g("stage")), act: one(g("act")), reg: one(g("reg")), age: one(g("age")),
     speed: one(g("speed")), conn: one(g("conn")), nocouns: one(g("nocouns")), q: one(g("q")),
-    pstage: one(g("pstage")), cprog: one(g("cprog")), sprog: one(g("sprog")),
+    pstage: one(g("pstage")), has: one(g("has")), cprog: one(g("cprog")), sprog: one(g("sprog")),
     id: one(g("id")), name: one(g("name")), phone: one(g("phone")),
   };
 
