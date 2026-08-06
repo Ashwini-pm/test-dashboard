@@ -82,6 +82,7 @@ export function stageCounts(ctx: Ctx, round?: string | null): StageCounts {
   const jl = (t: string, extra = "") =>
     `SELECT COUNT(DISTINCT x.lead_id) n FROM ${t} x JOIN leads l ON l.lead_id=x.lead_id WHERE l.nsat_round IN (${inc})${extra}`;
   const COH = ` AND x.lead_id IN (SELECT lead_id FROM counselling_sessions WHERE status IN ('held','no_show','reschedule'))`;
+  const NOT_COH = ` AND x.lead_id NOT IN (SELECT lead_id FROM counselling_sessions WHERE status IN ('held','no_show','reschedule'))`;
   // CSAT reads csat_map end to end, not the raw base tables.
   const mu = mapUniverse(ctx, round);
   // NSAT-4 keeps its test outcome, offer letter and seat on the map itself; the
@@ -140,19 +141,24 @@ export function stageCounts(ctx: Ctx, round?: string | null): StageCounts {
       ? fromN4("seat_booked = 'Yes' AND lead_id IN (SELECT lead_id FROM nsat_outcome)")
       : cs
       ? fromCsat("m.seat_booked = 'Yes' AND m.lead_id IN (SELECT lead_id FROM csat_outcome)")
-      : q(jl("payments", " AND x.paid_at >= '2026-07-16'" + COH)),
-    // "no panelist response" = the CRM offer/seat on a lead who never went through
-    // counselling. Shown alongside the counselled ones as x in the x + y split.
+      : q(jl("payments", COH)),
+    // "direct" = the CRM offer/seat on a lead who never went through counselling.
+    // Shown alongside the counselled ones as the y in the x + y split.
+    //
+    // NSAT-2 and NSAT-3 have no panelist feed, so "went through counselling" is
+    // counselling_sessions membership (COH) rather than a panelist response. Before
+    // this branch existed both rounds fell through to a hardcoded 0 and their tiles
+    // read "0 direct" while the CRM held 80 direct offers and 47 direct seats.
     offersNc: n4
       ? fromN4("nullif(offer_letter,'') IS NOT NULL AND lead_id NOT IN (SELECT lead_id FROM nsat_outcome)")
       : cs
       ? fromCsat("nullif(m.offer_letter,'') IS NOT NULL AND m.lead_id NOT IN (SELECT lead_id FROM csat_outcome)")
-      : 0,
+      : q(jl("offer_letters", NOT_COH)),
     seatsNc: n4
       ? fromN4("seat_booked = 'Yes' AND lead_id NOT IN (SELECT lead_id FROM nsat_outcome)")
       : cs
       ? fromCsat("m.seat_booked = 'Yes' AND m.lead_id NOT IN (SELECT lead_id FROM csat_outcome)")
-      : 0,
+      : q(jl("payments", NOT_COH)),
   };
 }
 

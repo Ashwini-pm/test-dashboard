@@ -639,6 +639,8 @@ function funnelN3(round: Round = "NSAT-3", src?: Src, prog?: string | null): Fun
   const useNsat3 = round === "NSAT-3" && !src && nsat3MapReady();
   const useCsat = CSAT_ROUND_SET.has(round) && !src && csatMapReady();
   const useN4 = round === "NSAT-4" && !src && n4MapReady();
+  const COH     = ` AND x.lead_id IN (SELECT lead_id FROM counselling_sessions WHERE status IN ('held','no_show','reschedule'))`;
+  const NOT_COH = ` AND x.lead_id NOT IN (SELECT lead_id FROM counselling_sessions WHERE status IN ('held','no_show','reschedule'))`;
   const useN5 = round === "NSAT-5" && !src && n5MapReady();
   const leads = useN5
     ? c(`SELECT COUNT(*) n FROM cohort_nsat5`)
@@ -738,7 +740,9 @@ function funnelN3(round: Round = "NSAT-3", src?: Src, prog?: string | null): Fun
     : useN4
     ? c(`SELECT COUNT(*) n FROM nsat4_map m WHERE m.seat_booked='Yes'
           AND m.lead_id IN (SELECT lead_id FROM nsat_outcome)`)
-    : c(`SELECT COUNT(*) n FROM payments x ${jl(" AND x.paid_at >= '2026-07-16' AND x.lead_id IN (SELECT lead_id FROM counselling_sessions WHERE status IN ('held','no_show','reschedule'))")}`);
+    // the paid_at >= 2026-07-16 filter that used to be here was written for NSAT-4
+    // and dropped 39 of NSAT-3's 83 seats; the counselling gate is the real filter
+    : c(`SELECT COUNT(*) n FROM payments x ${jl(COH)}`);
   // AI before-test calling (context sub-block)
   const called = c(`SELECT COUNT(DISTINCT lead_id) n FROM call_logs WHERE nsat_round IN (${inc})`);
   const connected = c(`SELECT COUNT(DISTINCT lead_id) n FROM call_logs WHERE nsat_round IN (${inc}) AND answered=1`);
@@ -918,7 +922,10 @@ function funnelN3(round: Round = "NSAT-3", src?: Src, prog?: string | null): Fun
     : useN4
     ? c(`SELECT COUNT(*) n FROM nsat4_map m WHERE nullif(m.offer_letter,'') IS NOT NULL
           AND m.lead_id NOT IN (SELECT lead_id FROM nsat_outcome)`)
-    : 0;
+    // NSAT-2 / NSAT-3 have no panelist feed: counselling_sessions membership is the
+    // equivalent. Previously 0, so their funnels read "0 direct" and silently
+    // dropped 80 offer letters.
+    : c(`SELECT COUNT(*) n FROM offer_letters x ${jl(NOT_COH)}`);
   main(
     "offer_letter",
     "Offer Letter",
@@ -936,7 +943,7 @@ function funnelN3(round: Round = "NSAT-3", src?: Src, prog?: string | null): Fun
     : useN4
     ? c(`SELECT COUNT(*) n FROM nsat4_map m WHERE m.seat_booked='Yes'
           AND m.lead_id NOT IN (SELECT lead_id FROM nsat_outcome)`)
-    : 0;
+    : c(`SELECT COUNT(*) n FROM payments x ${jl(NOT_COH)}`);
   main(
     "seat_payment",
     "Seat Payment",
