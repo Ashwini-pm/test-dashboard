@@ -1338,6 +1338,7 @@ export function sankeyTree(ctx: Ctx, round?: string | null): SNode {
   // showed Test given 0 while the funnel above it showed 387.
   const isN4 = mu?.table === "nsat4_map";
   const isCsat = mu?.table === "csat_map";
+  const isN5map = mu?.table === "cohort_nsat5";
   const fromN4 = (where: string) => ids(`SELECT lead_id FROM nsat4_map WHERE ${where}`);
   const fromCsat = (where: string) => ids(`SELECT lead_id FROM csat_map m WHERE ${where}${mu?.where ?? ""}`);
   const appeared = isN4
@@ -1365,6 +1366,23 @@ export function sankeyTree(ctx: Ctx, round?: string | null): SNode {
   const olAll = isN4
     ? fromN4("nullif(offer_letter,'') IS NOT NULL AND lead_id IN (SELECT lead_id FROM nsat_outcome)")
     : inRound("offer_letters");
+  // UNGATED offers and seats, for the cross-cut boxes only.
+  //
+  // olAll / seatAll above are panelist-gated on purpose: the funnel chain must only
+  // claim what counselling produced, so Counselled -> Offer -> Seat stays honest.
+  // But the cross-cut box hanging off Leads is answering a different question —
+  // "how many of these students hold an offer at all" — and the answer there is
+  // every offer, which then splits into X + Y + Z. Using the gated set made the box
+  // read 41 when the round has 85, and Y and Z both collapsed to zero because every
+  // gated offer is by definition counselled.
+  const olAny = isN4 ? fromN4("nullif(offer_letter,'') IS NOT NULL")
+    : isCsat ? fromCsat("nullif(m.offer_letter,'') IS NOT NULL")
+    : isN5map ? ids("SELECT lead_id FROM cohort_nsat5 WHERE nullif(offer_letter,'') IS NOT NULL")
+    : inRound("offer_letters");
+  const seatAny = isN4 ? fromN4("seat_booked='Yes'")
+    : isCsat ? fromCsat("m.seat_booked='Yes'")
+    : isN5map ? ids("SELECT lead_id FROM cohort_nsat5 WHERE seat_booked='Yes'")
+    : inRound("payments");
   // OL age buckets (business rule): live = first 3 days, expiring = day 3-4, expired = 5+ days
   const olLive = inRound("offer_letters", "x.issued_at > date('now','-3 day')");
   const olExpiring = inRound("offer_letters", "x.issued_at <= date('now','-3 day') AND x.issued_at > date('now','-5 day')");
@@ -1463,22 +1481,28 @@ export function sankeyTree(ctx: Ctx, round?: string | null): SNode {
     } catch { return new Set<string>(); }
   })();
   const outcomeChild = (stageSet: Set<string>, stageKey: string): SNode[] => {
-    const o = inter(stageSet, olAll);
-    if (!o.size) return [];
     const dr = (extra: string) => (mu ? `fstage=${stageKey}&${extra}` : undefined);
-    const x = inter(o, held);
-    const rest = diff(o, held);
-    const y = inter(rest, vintOld);
-    const z = diff(rest, vintOld);
-    const kids: SNode[] = [];
-    if (x.size) kids.push({ id: `${stageKey}:x_c`, label: "Through counselling", n: x.size,
-                            tone: "good", cross: true, drill: dr("has=ol&xyz=couns") });
-    if (y.size) kids.push({ id: `${stageKey}:x_y`, label: "Old lead", n: y.size,
-                            tone: "warn", cross: true, drill: dr("has=ol&xyz=old") });
-    if (z.size) kids.push({ id: `${stageKey}:x_z`, label: "Direct", n: z.size,
-                            tone: "info", cross: true, drill: dr("has=ol&xyz=direct") });
-    return [{ id: `${stageKey}:x_ol`, label: "Offer letter", n: o.size, tone: "info",
-              cross: true, drill: dr("has=ol"), ...(kids.length ? { children: kids } : {}) }];
+    // one box per outcome, each splitting into X + Y + Z. Seats are not nested under
+    // offers here: a student can hold an offer without a seat, so nesting would draw
+    // a progression that has not happened for most of them.
+    const box = (set: Set<string>, kind: "ol" | "sb", label: string, tone: SNode["tone"]): SNode[] => {
+      const o = inter(stageSet, set);
+      if (!o.size) return [];
+      const x = inter(o, held);
+      const rest = diff(o, held);
+      const y = inter(rest, vintOld);
+      const z = diff(rest, vintOld);
+      const kids: SNode[] = [];
+      if (x.size) kids.push({ id: `${stageKey}:${kind}_c`, label: "Through counselling", n: x.size,
+                              tone: "good", cross: true, drill: dr(`has=${kind}&xyz=couns`) });
+      if (y.size) kids.push({ id: `${stageKey}:${kind}_y`, label: "Old lead", n: y.size,
+                              tone: "warn", cross: true, drill: dr(`has=${kind}&xyz=old`) });
+      if (z.size) kids.push({ id: `${stageKey}:${kind}_z`, label: "Direct", n: z.size,
+                              tone: "info", cross: true, drill: dr(`has=${kind}&xyz=direct`) });
+      return [{ id: `${stageKey}:x_${kind}`, label, n: o.size, tone, cross: true,
+                drill: dr(`has=${kind}`), ...(kids.length ? { children: kids } : {}) }];
+    };
+    return [...box(olAny, "ol", "Offer letter", "info"), ...box(seatAny, "sb", "Seat booked", "good")];
   };
 
   const seatNode = node("seat", "Seat booked", sSeat.size, "good");
