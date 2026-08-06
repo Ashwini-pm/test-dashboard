@@ -635,6 +635,7 @@ export interface DrillParams {
   fstage?: string | null;  // funnel stage, panelist-gated: lead|reg|test|slot|couns|ol|sb
   prog?: string | null;    // CSAT programme bucket: BBA|BCA|BTECH|OTHER
   has?: string | null;     // outcome held: ol | sb | olopen (offer issued, seat not taken)
+  xyz?: string | null;     // which bucket: couns | old | direct
 }
 
 // Distinct values for the filter dropdowns on the drill page.
@@ -848,6 +849,23 @@ export function drill(ctx: Ctx, round: string | null | undefined, p: DrillParams
   if (p.prog && m.table === "csat_map") {
     const pw = progWhere(p.prog, "m");
     if (pw) { w.push(pw.replace(/^ AND /, "")); bits.push(`programme ${p.prog}`); }
+  }
+  // X + Y + Z bucket. Same predicates outcomeXyz uses, so a cell and its list agree.
+  if (p.xyz) {
+    const isCsat2 = m.table === "csat_map";
+    const isN42 = m.table === "nsat4_map";
+    const isN52 = m.table === "cohort_nsat5";
+    const key2 = ctx === "CSAT" ? "CSAT" : (round ?? "");
+    const win2 = WINDOW_OPEN[key2];
+    const COUNS2 = isCsat2 ? "m.lead_id IN (SELECT lead_id FROM csat_outcome WHERE status LIKE 'Happening%')"
+      : isN42 || isN52 ? "m.lead_id IN (SELECT lead_id FROM nsat_outcome WHERE status LIKE 'Happening%')"
+      : "m.lead_id IN (SELECT lead_id FROM counselling_sessions WHERE status='held')";
+    const VIN2 = "(SELECT v.lead_created FROM lead_vintage v WHERE v.lead_id = m.lead_id)";
+    if (win2) {
+      if (p.xyz === "couns")  { w.push(COUNS2); bits.push("through counselling"); }
+      if (p.xyz === "old")    { w.push(`NOT (${COUNS2}) AND ${VIN2} IS NOT NULL AND ${VIN2} < '${win2}'`); bits.push("old lead, predates the campaign"); }
+      if (p.xyz === "direct") { w.push(`NOT (${COUNS2}) AND ${VIN2} IS NOT NULL AND ${VIN2} >= '${win2}'`); bits.push("direct, campaign lead"); }
+    }
   }
   // Offers-and-seats-by-stage cells. Inline on the maps, base tables for NSAT-3.
   if (p.has) {
@@ -1568,4 +1586,93 @@ export function outcomeByStage(ctx: Ctx, round?: string | null): OutcomeStageRow
   }
   // Nothing to say if the round has no offers at all.
   return out.some((r) => r.ol > 0) ? out : [];
+}
+
+// ---------------------------------------------------------------------------
+// Offers and seats as X + Y + Z.
+//
+//   X  counselling   a panelist recorded this student (or, for rounds with no
+//                    panelist form, a counselling session was held)
+//   Y  old lead      not counselled, and the lead already existed in the CRM
+//                    before this round's registration opened
+//   Z  direct        not counselled, lead created inside the window: a sales-ops
+//                    conversion on campaign traffic
+//
+// X takes precedence, so a counselled old lead counts in X. The three always sum
+// to the total; nothing is ever subtracted.
+//
+// Vintage comes from lead_vintage, NOT from the map's crm_created, which is
+// clipped to each round's own window and therefore always reads "inside".
+//
+// A round with no counselling records at all reports hasCounselling: false so the
+// view can say "no counselling yet" rather than a misleading 0.
+// ---------------------------------------------------------------------------
+
+/** registration window open, per round. Y is measured against this. */
+const WINDOW_OPEN: Record<string, string> = {
+  "NSAT-2": "2026-05-11",
+  "NSAT-3": "2026-06-15",
+  "NSAT-4": "2026-07-13",
+  "NSAT-5": "2026-07-28",
+  CSAT: "2026-07-20",
+};
+
+export interface XyzRow {
+  key: "ol" | "sb";
+  label: string;
+  total: number;
+  counselling: number;
+  oldLead: number;
+  direct: number;
+  /** no vintage on record — shown rather than folded, so Z is not overstated */
+  unknown: number;
+}
+export interface XyzResult {
+  rows: XyzRow[];
+  hasCounselling: boolean;
+  windowOpen: string;
+}
+
+export function outcomeXyz(ctx: Ctx, round?: string | null): XyzResult | null {
+  const m = mapTableFor(ctx, round);
+  if (!m) return null;
+  const key = ctx === "CSAT" ? "CSAT" : (round ?? "");
+  const win = WINDOW_OPEN[key];
+  if (!win) return null;
+
+  const isCsat = m.table === "csat_map";
+  const isN4 = m.table === "nsat4_map";
+  const isN5 = m.table === "cohort_nsat5";
+  const inline = isCsat || isN4 || isN5;
+
+  const OL = inline ? "nullif(m.offer_letter,'') IS NOT NULL"
+    : "m.lead_id IN (SELECT lead_id FROM offer_letters)";
+  const SB = inline ? "m.seat_booked='Yes'"
+    : "m.lead_id IN (SELECT lead_id FROM payments)";
+  // NSAT-4 / NSAT-5 use the panelist form, CSAT its own, the rest counselling_sessions
+  const COUNS = isCsat ? "m.lead_id IN (SELECT lead_id FROM csat_outcome WHERE status LIKE 'Happening%')"
+    : isN4 || isN5 ? "m.lead_id IN (SELECT lead_id FROM nsat_outcome WHERE status LIKE 'Happening%')"
+    : "m.lead_id IN (SELECT lead_id FROM counselling_sessions WHERE status='held')";
+  const VIN = "(SELECT v.lead_created FROM lead_vintage v WHERE v.lead_id = m.lead_id)";
+
+  const n = (where: string) => {
+    try {
+      return Number((db.prepare(
+        `SELECT COUNT(*) c FROM ${m.table} m WHERE ${where}${m.where}`
+      ).get() as { c?: number } | undefined)?.c ?? 0);
+    } catch { return 0; }
+  };
+
+  const hasCounselling = n(COUNS) > 0;
+  const rows: XyzRow[] = [];
+  for (const [k, label, cond] of [["ol", "Offer letters", OL], ["sb", "Seats", SB]] as const) {
+    const total = n(cond);
+    if (!total) continue;
+    const counselling = n(`(${cond}) AND (${COUNS})`);
+    const oldLead = n(`(${cond}) AND NOT (${COUNS}) AND ${VIN} IS NOT NULL AND ${VIN} < '${win}'`);
+    const direct = n(`(${cond}) AND NOT (${COUNS}) AND ${VIN} IS NOT NULL AND ${VIN} >= '${win}'`);
+    const unknown = n(`(${cond}) AND NOT (${COUNS}) AND ${VIN} IS NULL`);
+    rows.push({ key: k, label, total, counselling, oldLead, direct, unknown });
+  }
+  return rows.length ? { rows, hasCounselling, windowOpen: win } : null;
 }
