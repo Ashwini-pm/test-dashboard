@@ -91,12 +91,19 @@ async function pullTable(supaTable: string): Promise<Record<string, unknown>[]> 
   return chunks.flat();
 }
 
-// Internal test leads. Kept as an explicit id list rather than a name match:
-// "test" appears inside real names, and silently dropping a real student is worse
-// than carrying three fake ones.
-const TEST_LEAD_IDS = new Set(["000001", "0000002", "4407160"]);
+// Internal test leads, never shown anywhere.
+//
+// The list is DATA, not code: public.excluded_leads in Supabase. Adding a future
+// test lead is one INSERT with no deploy. The three known ones are also deleted
+// from lead_map itself, but this stays as the backstop — rebuild_lead_map()
+// truncates and re-inserts the whole table, so a deliberate manual rebuild would
+// bring them back and only this would catch it.
+//
+// Never a name match: "test" occurs inside real names, and silently dropping a
+// real student is worse than carrying a few fake ones.
+let EXCLUDED_LEAD_IDS = new Set<string>();
 function isTestLead(r: Record<string, any>): boolean {
-  return TEST_LEAD_IDS.has(String(r.lead_id ?? "").trim())
+  return EXCLUDED_LEAD_IDS.has(String(r.lead_id ?? "").trim())
     || String(r.origin ?? "").trim() === "test";
 }
 
@@ -552,6 +559,7 @@ async function fetchCsatProject(): Promise<CsatPull | null> {
     // AI calls, narrowed to rows already resolved to a cohort lead. The lead ids
     // are stored on the row, so we never join on phone.
     settle("lead_vintage", pull("lead_vintage", "lead_id,lead_created")),
+    settle("excluded_leads", pull("excluded_leads", "lead_id")),
     settle("ai_calls", pull(
       "ai_calls",
       "nsat4_lead_id,csat1_lead_id,status,called_at",
@@ -639,6 +647,14 @@ function overlayNsat4Csat(pulls: CsatPull): void {
     db.prepare("DELETE FROM csat_map").run();
     db.prepare("DELETE FROM nsat_outcome").run();
     db.prepare("DELETE FROM lead_vintage").run();
+    // Load the exclusion list BEFORE the loop: pulls are processed in array order
+    // and lead_map comes first, so populating it inside the loop would leave the
+    // set empty exactly when the filter needs it.
+    EXCLUDED_LEAD_IDS = new Set(
+      (pulls.find((p) => p.table === "excluded_leads")?.rows ?? [])
+        .map((r) => String(r.lead_id ?? "").trim())
+        .filter(Boolean),
+    );
     for (const { table, rows } of pulls) {
       if (table === "nsat3_lead_map") {
         mirrorRaw("cohort_nsat3", rows);
@@ -673,6 +689,7 @@ function overlayNsat4Csat(pulls: CsatPull): void {
         }
         continue;
       }
+      if (table === "excluded_leads") continue;   // already loaded above
       if (table === "lead_vintage") {
         for (const r of rows) {
           const lid = String(r.lead_id ?? "").trim();
